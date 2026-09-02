@@ -42,24 +42,28 @@ impl Effects {
     pub const DOUBLE_UNDERLINE: Self = Self(1 << 9);
 
     /// Creates an empty set of effects.
+    #[must_use]
     #[inline]
     pub const fn empty() -> Self {
         Self::NONE
     }
 
     /// Returns `true` if no effects are set.
+    #[must_use]
     #[inline]
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
 
     /// Returns `true` if all effects in `other` are contained in `self`.
+    #[must_use]
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
 
     /// Inserts the specified effects into `self`.
+    #[must_use]
     #[inline]
     pub const fn insert(mut self, other: Self) -> Self {
         self.0 |= other.0;
@@ -67,6 +71,7 @@ impl Effects {
     }
 
     /// Removes the specified effects from `self`.
+    #[must_use]
     #[inline]
     pub const fn remove(mut self, other: Self) -> Self {
         self.0 &= !other.0;

@@ -4,6 +4,7 @@ use crate::{
 };
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::fmt::Write;
 use std::process;
 
 /// Specifies the parsing action to take when an argument is encountered.
@@ -40,6 +41,7 @@ pub struct Arg {
 
 impl Arg {
     /// Creates a new argument definition with the specified identifier.
+    #[must_use]
     pub fn new(id: &'static str) -> Self {
         Self {
             id,
@@ -54,48 +56,56 @@ impl Arg {
     }
 
     /// Sets the short character flag.
+    #[must_use]
     pub fn short(mut self, short: char) -> Self {
         self.short = Some(short);
         self
     }
 
     /// Sets the long flag name.
+    #[must_use]
     pub fn long(mut self, long: &'static str) -> Self {
         self.long = Some(long);
         self
     }
 
     /// Sets the help message description.
+    #[must_use]
     pub fn help(mut self, help: &'static str) -> Self {
         self.help = Some(help);
         self
     }
 
     /// Sets the placeholder value name for help messages.
+    #[must_use]
     pub fn value_name(mut self, name: &'static str) -> Self {
         self.value_name = Some(name);
         self
     }
 
     /// Sets whether the argument is required.
+    #[must_use]
     pub fn required(mut self, required: bool) -> Self {
         self.required = required;
         self
     }
 
     /// Sets the argument evaluation action.
+    #[must_use]
     pub fn action(mut self, action: ArgAction) -> Self {
         self.action = action;
         self
     }
 
     /// Sets the fallback default value.
+    #[must_use]
     pub fn default_value(mut self, default: &'static str) -> Self {
         self.default_value = Some(default);
         self
     }
 
     /// Returns `true` if the argument has neither short nor long flags.
+    #[must_use]
     #[inline]
     pub fn is_positional(&self) -> bool {
         self.short.is_none() && self.long.is_none()
@@ -112,11 +122,13 @@ pub struct ArgMatches {
 
 impl ArgMatches {
     /// Checks whether a boolean flag was supplied.
+    #[must_use]
     pub fn get_flag(&self, id: &str) -> bool {
         self.flags.contains(id)
     }
 
     /// Gets the first or single value for an argument, parsed into `T`.
+    #[must_use]
     pub fn get_one<T: FromArgValue>(&self, id: &str) -> Option<T> {
         self.values
             .get(id)
@@ -125,6 +137,7 @@ impl ArgMatches {
     }
 
     /// Gets all values supplied for an argument, parsed into `Vec<T>`.
+    #[must_use]
     pub fn get_many<T: FromArgValue>(&self, id: &str) -> Option<Vec<T>> {
         self.values
             .get(id)
@@ -132,6 +145,7 @@ impl ArgMatches {
     }
 
     /// Returns the matched subcommand name and its parsed matches, if present.
+    #[must_use]
     pub fn subcommand(&self) -> Option<(&str, &ArgMatches)> {
         self.subcommand
             .as_ref()
@@ -170,6 +184,7 @@ pub struct Xarp {
 
 impl Xarp {
     /// Creates a new command-line application definition.
+    #[must_use]
     pub fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -182,42 +197,49 @@ impl Xarp {
     }
 
     /// Sets the application version string.
+    #[must_use]
     pub fn version(mut self, version: &'static str) -> Self {
         self.version = Some(version);
         self
     }
 
     /// Sets the short description of the application.
+    #[must_use]
     pub fn about(mut self, about: &'static str) -> Self {
         self.about = Some(about);
         self
     }
 
     /// Sets the terminal output styling.
+    #[must_use]
     pub fn styles(mut self, styles: Styles) -> Self {
         self.styles = styles;
         self
     }
 
     /// Registers a single argument definition.
+    #[must_use]
     pub fn arg(mut self, arg: Arg) -> Self {
         self.args.push(arg);
         self
     }
 
     /// Registers multiple argument definitions from an iterator.
+    #[must_use]
     pub fn args<I: IntoIterator<Item = Arg>>(mut self, args: I) -> Self {
         self.args.extend(args);
         self
     }
 
     /// Registers a subcommand.
+    #[must_use]
     pub fn subcommand(mut self, sub: Xarp) -> Self {
         self.subcommands.push(sub);
         self
     }
 
     /// Parses arguments from `std::env::args()` or terminates the process on failure.
+    #[must_use]
     pub fn get_matches(self) -> ArgMatches {
         let args: Vec<String> = env::args().collect();
         match self.try_get_matches_from(&args) {
@@ -230,6 +252,12 @@ impl Xarp {
     }
 
     /// Attempts to parse arguments from a string slice without exiting on error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error message if an unexpected argument is encountered, a required
+    /// argument is missing, or an option is missing its value.
+    #[allow(clippy::too_many_lines)]
     pub fn try_get_matches_from(self, args: &[String]) -> Result<ArgMatches, String> {
         let mut matches = ArgMatches::default();
         let tokens = if args.is_empty() { &[] } else { &args[1..] };
@@ -266,12 +294,14 @@ impl Xarp {
             let token = &tokens[i];
 
             // Subcommands
-            if !token.starts_with('-') && positional_idx == 0
-                && let Some(sub) = self.subcommands.iter().find(|s| s.name == token) {
-                    let sub_matches = sub.clone().try_get_matches_from(&tokens[i..])?;
-                    matches.subcommand = Some((sub.name.to_string(), Box::new(sub_matches)));
-                    return Ok(matches);
-                }
+            if !token.starts_with('-')
+                && positional_idx == 0
+                && let Some(sub) = self.subcommands.iter().find(|s| s.name == token)
+            {
+                let sub_matches = sub.clone().try_get_matches_from(&tokens[i..])?;
+                matches.subcommand = Some((sub.name.to_string(), Box::new(sub_matches)));
+                return Ok(matches);
+            }
 
             // Flags / Options
             if token == "-h" || token == "--help" {
@@ -317,7 +347,10 @@ impl Xarp {
                     }
                 }
             } else if token.starts_with('-') && token.len() > 1 {
-                let short_char = token.chars().nth(1).unwrap();
+                let Some(short_char) = token.chars().nth(1) else {
+                    return Err(self.format_error(&format!("unexpected argument '{token}' found")));
+                };
+
                 let matched_arg = effective_args
                     .iter()
                     .find(|a| a.short == Some(short_char))
@@ -390,6 +423,7 @@ impl Xarp {
     }
 
     /// Prints formatted command-line help information to standard output.
+    #[allow(clippy::too_many_lines)]
     pub fn print_help(&self) {
         // Headers & Badges
         let bar_accent = Style::new().bold().fg(Color::BrightCyan);
@@ -514,12 +548,12 @@ impl Xarp {
         for arg in &options {
             let mut syntax = String::new();
             if let Some(s) = arg.short {
-                syntax.push_str(&format!("-{s}, "));
+                let _ = write!(syntax, "-{s}, ");
             } else {
                 syntax.push_str("    ");
             }
             if let Some(l) = arg.long {
-                syntax.push_str(&format!("--{l}"));
+                let _ = write!(syntax, "--{l}");
             }
 
             let rendered_flag = opt_flag.paint(&syntax);

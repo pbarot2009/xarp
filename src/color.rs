@@ -65,6 +65,10 @@ pub enum Color {
 
 impl Color {
     /// Renders color parameters to a standard ANSI sequence stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`fmt::Error`] if writing to the output formatter fails.
     pub fn write_ansi(&self, f: &mut Formatter<'_>, is_bg: bool) -> fmt::Result {
         let (base_std, base_bright, base_ext) = if is_bg {
             (40u8, 100u8, 48u8)
