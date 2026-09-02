@@ -1,15 +1,22 @@
 [package]
 name = "xarp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
-license = "MIT"
-description = "A lightweight, dependency-free CLI styling and argument parser in pure Rust."
+rust-version = "1.85"
+authors = ["Prathmesh S. Barot"]
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/pbarot2009/xarp"
+homepage = "https://github.com/pbarot2009/xarp"
+documentation = "https://docs.rs/xarp"
+description = "A zero-dependency, pure-Rust argument parser with rich 24-color and RGB terminal styling."
 readme = "README.md"
-keywords = ["cli", "arguments", "styling", "colors"]
+keywords = ["cli", "arguments", "styling", "colors", "terminal"]
+categories = ["command-line-interface", "development-tools"]
 exclude = [
-    ".github/"
+    ".github/",
+    ".gitignore"
 ]
+
 [lib]
 name = "xarp"
 path = "src/lib.rs"

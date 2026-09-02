@@ -461,7 +461,7 @@ impl Xarp {
         println!();
 
         // Accent Bar Header & About
-        let v_str = self.version.unwrap_or("0.1.0");
+        let v_str = self.version.unwrap_or("0.1.1");
         let name_upper = self.name.to_uppercase();
 
         print!(
