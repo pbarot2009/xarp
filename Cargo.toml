@@ -14,4 +14,16 @@ exclude = [
 name = "xarp"
 path = "src/lib.rs"
 
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Allow acceptable patterns for CLI builder libraries
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+cast_possible_truncation = "allow"
+
 [dependencies]
