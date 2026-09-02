@@ -1,0 +1,52 @@
+name: Rolling Dev Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+# Prevent race conditions from rapid pushes
+concurrency:
+  group: rolling-dev-release
+  cancel-in-progress: true
+
+jobs:
+  update-dev-release:
+    name: Update Rolling Dev Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update Floating Git Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f dev
+          git push -f origin dev
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev
+          name: "xarp dev (main)"
+          body: |
+            ### Rolling Development Build
+            This release automatically tracks the latest commit on the `main` branch.
+
+            **Commit:** `${{ github.sha }}`
+
+            #### Usage in Cargo.toml
+            To use this rolling version directly in your project:
+            ```toml
+            [dependencies]
+            xarp = { git = "[https://github.com/$](https://github.com/$){{ github.repository }}", branch = "main" }
+            ```
+          prerelease: true
+          make_latest: false
