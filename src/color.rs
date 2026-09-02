@@ -1,6 +1,6 @@
 //! src/color.rs
-//! part of ramp. A Colorful and Customisable CLI wrapper with default for quick start!
-use crate::style::{Style, Styled};
+//! part of xarp. A Colorful and Customisable CLI wrapper with default for quick start!
+use crate::style::Style;
 use core::fmt::{self, Formatter};
 /// 24 distinct named colors, 8-bit ANSI palette, and 24-bit TrueColor (RGB).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
