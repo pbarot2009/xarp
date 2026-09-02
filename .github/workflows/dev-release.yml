@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
 
-# Prevent race conditions from rapid pushes
 concurrency:
   group: rolling-dev-release
   cancel-in-progress: true
@@ -40,7 +39,7 @@ jobs:
             ### Rolling Development Build
             This release automatically tracks the latest commit on the `main` branch.
 
-            **Commit:** `${{ github.sha }}`
+            **Commit:** ${{ github.sha }}
 
             #### Usage in Cargo.toml
             To use this rolling version directly in your project:
