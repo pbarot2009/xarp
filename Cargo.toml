@@ -7,7 +7,9 @@ description = "A lightweight, dependency-free CLI styling and argument parser in
 repository = "https://github.com/pbarot2009/xarp"
 readme = "README.md"
 keywords = ["cli", "arguments", "styling", "colors"]
-
+exclude = [
+    ".github/"
+]
 [lib]
 name = "xarp"
 path = "src/lib.rs"
