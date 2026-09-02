@@ -3,4 +3,8 @@ name = "ramp"
 version = "0.1.0-dev"
 edition = "2024"
 
+[lib]
+name = "ramp"
+path = "src/lib.rs"
+
 [dependencies]
