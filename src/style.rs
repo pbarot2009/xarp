@@ -6,8 +6,11 @@ use core::ops::BitOr;
 /// Represents a combined text style (Effects + Foreground + Background).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Style {
+    /// Foreground color.
     pub fg: Option<Color>,
+    /// Background color.
     pub bg: Option<Color>,
+    /// Set of visual text effects.
     pub effects: Effects,
 }
 
@@ -22,6 +25,7 @@ impl Style {
         }
     }
 
+    /// Returns `true` if no color or text effects are applied.
     #[inline]
     pub const fn is_plain(&self) -> bool {
         self.fg.is_none() && self.bg.is_none() && self.effects.is_empty()
@@ -29,64 +33,76 @@ impl Style {
 
     // --- Fluent Builders ---
 
+    /// Sets the foreground color.
     #[inline]
     pub const fn fg(mut self, color: Color) -> Self {
         self.fg = Some(color);
         self
     }
 
+    /// Sets the background color.
     #[inline]
     pub const fn bg(mut self, color: Color) -> Self {
         self.bg = Some(color);
         self
     }
 
+    /// Adds text effects to the current style.
     #[inline]
     pub const fn effects(mut self, effects: Effects) -> Self {
         self.effects = self.effects.insert(effects);
         self
     }
 
+    /// Applies bold styling.
     #[inline]
     pub const fn bold(self) -> Self {
         self.effects(Effects::BOLD)
     }
 
+    /// Applies dim (faint) styling.
     #[inline]
     pub const fn dim(self) -> Self {
         self.effects(Effects::DIM)
     }
 
+    /// Applies italic styling.
     #[inline]
     pub const fn italic(self) -> Self {
         self.effects(Effects::ITALIC)
     }
 
+    /// Applies single underline styling.
     #[inline]
     pub const fn underline(self) -> Self {
         self.effects(Effects::UNDERLINE)
     }
 
+    /// Applies slow blink styling.
     #[inline]
     pub const fn blink(self) -> Self {
         self.effects(Effects::BLINK)
     }
 
+    /// Inverts foreground and background colors.
     #[inline]
     pub const fn invert(self) -> Self {
         self.effects(Effects::INVERT)
     }
 
+    /// Hides the text.
     #[inline]
     pub const fn hidden(self) -> Self {
         self.effects(Effects::HIDDEN)
     }
 
+    /// Applies strikethrough (crossed-out) styling.
     #[inline]
     pub const fn strikethrough(self) -> Self {
         self.effects(Effects::STRIKETHROUGH)
     }
 
+    /// Applies double underline styling.
     #[inline]
     pub const fn double_underline(self) -> Self {
         self.effects(Effects::DOUBLE_UNDERLINE)
@@ -231,14 +247,23 @@ impl<'a, T: Display + ?Sized> Display for Styled<'a, T> {
 /// Styling configuration for CLI argument parsers (Help messages, Usage, Errors).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Styles {
+    /// Style applied to section headers.
     pub header: Style,
+    /// Style applied to usage instructions.
     pub usage: Style,
+    /// Style applied to command literals and flags.
     pub literal: Style,
+    /// Style applied to argument value placeholders.
     pub placeholder: Style,
+    /// Style applied to error messages.
     pub error: Style,
+    /// Style applied to valid values or states.
     pub valid: Style,
+    /// Style applied to invalid values or warnings.
     pub invalid: Style,
+    /// Style applied to warning messages.
     pub warning: Style,
+    /// Style applied to secondary or dimmed text.
     pub muted: Style,
 }
 
@@ -273,38 +298,55 @@ impl Styles {
         }
     }
 
+    /// Sets the header style.
     pub const fn header(mut self, style: Style) -> Self {
         self.header = style;
         self
     }
+
+    /// Sets the usage style.
     pub const fn usage(mut self, style: Style) -> Self {
         self.usage = style;
         self
     }
+
+    /// Sets the literal style.
     pub const fn literal(mut self, style: Style) -> Self {
         self.literal = style;
         self
     }
+
+    /// Sets the placeholder style.
     pub const fn placeholder(mut self, style: Style) -> Self {
         self.placeholder = style;
         self
     }
+
+    /// Sets the error style.
     pub const fn error(mut self, style: Style) -> Self {
         self.error = style;
         self
     }
+
+    /// Sets the valid style.
     pub const fn valid(mut self, style: Style) -> Self {
         self.valid = style;
         self
     }
+
+    /// Sets the invalid style.
     pub const fn invalid(mut self, style: Style) -> Self {
         self.invalid = style;
         self
     }
+
+    /// Sets the warning style.
     pub const fn warning(mut self, style: Style) -> Self {
         self.warning = style;
         self
     }
+
+    /// Sets the muted style.
     pub const fn muted(mut self, style: Style) -> Self {
         self.muted = style;
         self

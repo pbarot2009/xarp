@@ -7,31 +7,40 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::process;
 
-// Argument Action & Definition
+/// Specifies the parsing action to take when an argument is encountered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArgAction {
-    /// Flag without value (e.g., `-v`, `--verbose`). Sets `true`.
+    /// Flag without a value (e.g., `-v`, `--verbose`). Sets the flag to `true`.
     SetTrue,
-    /// Option or Positional that captures a single value.
+    /// Option or positional argument that captures a single value.
     Set,
-    /// Option that can be supplied multiple times to collect values.
+    /// Option that can be supplied multiple times to collect values into a list.
     Append,
 }
 
+/// Represents a command-line argument definition.
 #[derive(Clone, Debug)]
 pub struct Arg {
+    /// Unique identifier for the argument.
     pub id: &'static str,
+    /// Short single-character flag (e.g., `'v'` for `-v`).
     pub short: Option<char>,
+    /// Long flag name (e.g., `"verbose"` for `--verbose`).
     pub long: Option<&'static str>,
+    /// Description of the argument displayed in help messages.
     pub help: Option<&'static str>,
+    /// Placeholder name for the argument value displayed in help messages.
     pub value_name: Option<&'static str>,
+    /// Whether the argument must be supplied by the user.
     pub required: bool,
+    /// Parsing action performed when this argument is encountered.
     pub action: ArgAction,
+    /// Fallback value used when the argument is not explicitly provided.
     pub default_value: Option<&'static str>,
 }
 
 impl Arg {
-    /// Create a new argument definition with an identifier.
+    /// Creates a new argument definition with the specified identifier.
     pub fn new(id: &'static str) -> Self {
         Self {
             id,
@@ -45,48 +54,56 @@ impl Arg {
         }
     }
 
+    /// Sets the short character flag.
     pub fn short(mut self, short: char) -> Self {
         self.short = Some(short);
         self
     }
 
+    /// Sets the long flag name.
     pub fn long(mut self, long: &'static str) -> Self {
         self.long = Some(long);
         self
     }
 
+    /// Sets the help message description.
     pub fn help(mut self, help: &'static str) -> Self {
         self.help = Some(help);
         self
     }
 
+    /// Sets the placeholder value name for help messages.
     pub fn value_name(mut self, name: &'static str) -> Self {
         self.value_name = Some(name);
         self
     }
 
+    /// Sets whether the argument is required.
     pub fn required(mut self, required: bool) -> Self {
         self.required = required;
         self
     }
 
+    /// Sets the argument evaluation action.
     pub fn action(mut self, action: ArgAction) -> Self {
         self.action = action;
         self
     }
 
+    /// Sets the fallback default value.
     pub fn default_value(mut self, default: &'static str) -> Self {
         self.default_value = Some(default);
         self
     }
 
+    /// Returns `true` if the argument has neither short nor long flags.
     #[inline]
     pub fn is_positional(&self) -> bool {
         self.short.is_none() && self.long.is_none()
     }
 }
 
-// ArgMatches (Parsed Output Container)
+/// Container holding parsed command-line flags, values, and subcommands.
 #[derive(Clone, Debug, Default)]
 pub struct ArgMatches {
     flags: HashSet<String>,
@@ -95,12 +112,12 @@ pub struct ArgMatches {
 }
 
 impl ArgMatches {
-    /// Checks if a boolean flag was supplied.
+    /// Checks whether a boolean flag was supplied.
     pub fn get_flag(&self, id: &str) -> bool {
         self.flags.contains(id)
     }
 
-    /// Gets the first or single value for an option/positional argument.
+    /// Gets the first or single value for an argument, parsed into `T`.
     pub fn get_one<T: FromArgValue>(&self, id: &str) -> Option<T> {
         self.values
             .get(id)
@@ -108,14 +125,14 @@ impl ArgMatches {
             .and_then(|val| T::from_arg_value(val))
     }
 
-    /// Gets all values supplied for an argument (e.g. multiple occurrences).
+    /// Gets all values supplied for an argument, parsed into `Vec<T>`.
     pub fn get_many<T: FromArgValue>(&self, id: &str) -> Option<Vec<T>> {
         self.values
             .get(id)
             .map(|vals| vals.iter().filter_map(|v| T::from_arg_value(v)).collect())
     }
 
-    /// Returns the matched subcommand name and its inner matches.
+    /// Returns the matched subcommand name and its parsed matches, if present.
     pub fn subcommand(&self) -> Option<(&str, &ArgMatches)> {
         self.subcommand
             .as_ref()
@@ -123,8 +140,9 @@ impl ArgMatches {
     }
 }
 
-/// Helper trait to parse strings into types like `String`, `i32`, `PathBuf`, etc.
+/// Helper trait to parse argument strings into typed values.
 pub trait FromArgValue: Sized {
+    /// Parses a string slice into `Self`, returning `None` if parsing fails.
     fn from_arg_value(val: &str) -> Option<Self>;
 }
 
@@ -134,18 +152,25 @@ impl<T: std::str::FromStr> FromArgValue for T {
     }
 }
 
-// 3. Xarp CLI Engine
+/// Command-line argument parser and application configuration.
 #[derive(Clone, Debug)]
 pub struct Xarp {
+    /// Name of the application binary.
     pub name: &'static str,
+    /// Version string displayed in help and version outputs.
     pub version: Option<&'static str>,
+    /// Short description of the application.
     pub about: Option<&'static str>,
+    /// Formatting styles applied to terminal outputs.
     pub styles: Styles,
+    /// Registered argument definitions.
     pub args: Vec<Arg>,
+    /// Registered subcommands.
     pub subcommands: Vec<Xarp>,
 }
 
 impl Xarp {
+    /// Creates a new command-line application definition.
     pub fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -157,39 +182,43 @@ impl Xarp {
         }
     }
 
+    /// Sets the application version string.
     pub fn version(mut self, version: &'static str) -> Self {
         self.version = Some(version);
         self
     }
 
+    /// Sets the short description of the application.
     pub fn about(mut self, about: &'static str) -> Self {
         self.about = Some(about);
         self
     }
 
+    /// Sets the terminal output styling.
     pub fn styles(mut self, styles: Styles) -> Self {
         self.styles = styles;
         self
     }
 
+    /// Registers a single argument definition.
     pub fn arg(mut self, arg: Arg) -> Self {
         self.args.push(arg);
         self
     }
 
+    /// Registers multiple argument definitions from an iterator.
     pub fn args<I: IntoIterator<Item = Arg>>(mut self, args: I) -> Self {
         self.args.extend(args);
         self
     }
 
+    /// Registers a subcommand.
     pub fn subcommand(mut self, sub: Xarp) -> Self {
         self.subcommands.push(sub);
         self
     }
 
-    // --- Parser Core ---
-
-    /// Parse `std::env::args()` or exit printing styled errors/help.
+    /// Parses arguments from `std::env::args()` or terminates the process on failure.
     pub fn get_matches(self) -> ArgMatches {
         let args: Vec<String> = env::args().collect();
         match self.try_get_matches_from(&args) {
@@ -201,7 +230,7 @@ impl Xarp {
         }
     }
 
-    /// Parse from any custom string slice.
+    /// Attempts to parse arguments from a string slice without exiting on error.
     pub fn try_get_matches_from(self, args: &[String]) -> Result<ArgMatches, String> {
         let mut matches = ArgMatches::default();
         let tokens = if args.is_empty() { &[] } else { &args[1..] };
@@ -353,8 +382,7 @@ impl Xarp {
         Ok(matches)
     }
 
-    // --- Formatters and Display ---
-
+    /// Prints the application name and version string to standard output.
     pub fn print_version(&self) {
         let v = self.version.unwrap_or("unknown");
         println!(
@@ -364,19 +392,15 @@ impl Xarp {
         );
     }
 
+    /// Prints formatted command-line help information to standard output.
     pub fn print_help(&self) {
-        use crate::color::Color;
-        use crate::effect::Effects;
-        use crate::style::Style;
-
-        // --- Color & Style Palette ---
-        // Headers & Badges (Background + Invert + Bold)
+        // Headers & Badges
         let bar_accent = Style::new().bold().fg(Color::BrightCyan);
         let badge_name = Style::new().bold().bg(Color::Teal).fg(Color::Black);
         let ver_pill = Style::new().italic().fg(Color::Gold);
         let about_txt = Style::new().fg(Color::Silver);
 
-        // Sections (Underline + Bold + Orange/Purple)
+        // Sections
         let sec_arrow = Style::new().bold().fg(Color::Orange);
         let sec_title = Style::new().bold().underline().fg(Color::BrightWhite);
 
@@ -387,7 +411,7 @@ impl Xarp {
         let pos_syntax = Style::new().italic().fg(Color::Gold);
         let opt_syntax = Style::new().dim().fg(Color::BrightCyan);
 
-        // Items (Commands, Arguments, Options)
+        // Items
         let cmd_item = Style::new().bold().fg(Color::Lime);
         let arg_item = Style::new().italic().fg(Color::Gold);
         let opt_flag = Style::new().bold().fg(Color::BrightCyan);
@@ -399,13 +423,13 @@ impl Xarp {
         let opt_tag = Style::new().dim().fg(Color::BrightBlack);
         let def_tag = Style::new().fg(Color::Teal).dim();
 
-        // Footer Card (Invert + Dim)
+        // Footer Card
         let tip_badge = Style::new().bold().bg(Color::Indigo).fg(Color::BrightWhite);
         let tip_text = Style::new().dim().fg(Color::Silver);
 
         println!();
 
-        // 1. Accent Bar Header & About
+        // Accent Bar Header & About
         let v_str = self.version.unwrap_or("0.1.0");
         let name_upper = self.name.to_uppercase();
 
@@ -421,7 +445,7 @@ impl Xarp {
         }
         println!("\n{}", bar_accent.paint("┃"));
 
-        // 2. Syntax Blueprint
+        // Syntax Blueprint
         print!(
             "{} {} {}",
             bar_accent.paint("┃"),
@@ -445,7 +469,7 @@ impl Xarp {
         }
         println!("\n");
 
-        // 3. Subcommands Section
+        // Subcommands Section
         if !self.subcommands.is_empty() {
             println!("{} {}", sec_arrow.paint("›"), sec_title.paint("Commands"));
             for cmd in &self.subcommands {
@@ -459,7 +483,7 @@ impl Xarp {
             println!();
         }
 
-        // 4. Positional Arguments Section
+        // Positional Arguments Section
         let positionals: Vec<&Arg> = self.args.iter().filter(|a| a.is_positional()).collect();
         if !positionals.is_empty() {
             println!("{} {}", sec_arrow.paint("›"), sec_title.paint("Arguments"));
@@ -482,7 +506,7 @@ impl Xarp {
             println!();
         }
 
-        // 5. Options & Flags Section
+        // Options & Flags Section
         let options: Vec<&Arg> = self.args.iter().filter(|a| !a.is_positional()).collect();
         println!(
             "{} {}",
@@ -550,7 +574,7 @@ impl Xarp {
             );
         }
 
-        // 6. Subcommand Hint Footer
+        // Subcommand Hint Footer
         if !self.subcommands.is_empty() {
             println!();
             println!(
