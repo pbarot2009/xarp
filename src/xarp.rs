@@ -1,6 +1,5 @@
 use crate::{
     color::Color,
-    effect::Effects,
     style::{Style, Styles},
 };
 use std::collections::{HashMap, HashSet};
@@ -267,13 +266,12 @@ impl Xarp {
             let token = &tokens[i];
 
             // Subcommands
-            if !token.starts_with('-') && positional_idx == 0 {
-                if let Some(sub) = self.subcommands.iter().find(|s| s.name == token) {
+            if !token.starts_with('-') && positional_idx == 0
+                && let Some(sub) = self.subcommands.iter().find(|s| s.name == token) {
                     let sub_matches = sub.clone().try_get_matches_from(&tokens[i..])?;
                     matches.subcommand = Some((sub.name.to_string(), Box::new(sub_matches)));
                     return Ok(matches);
                 }
-            }
 
             // Flags / Options
             if token == "-h" || token == "--help" {
@@ -282,8 +280,7 @@ impl Xarp {
             } else if token == "-V" || token == "--version" {
                 self.print_version();
                 process::exit(0);
-            } else if token.starts_with("--") {
-                let long_name = &token[2..];
+            } else if let Some(long_name) = token.strip_prefix("--") {
                 let (name, inline_val) = match long_name.split_once('=') {
                     Some((k, v)) => (k, Some(v.to_string())),
                     None => (long_name, None),
@@ -526,13 +523,13 @@ impl Xarp {
             }
 
             let rendered_flag = opt_flag.paint(&syntax);
-            let val_suffix = if arg.action != ArgAction::SetTrue {
+            let val_suffix = if arg.action == ArgAction::SetTrue {
+                String::new()
+            } else {
                 format!(
                     " {}",
                     opt_val.paint(&format!("<{}>", arg.value_name.unwrap_or("VAL")))
                 )
-            } else {
-                String::new()
             };
 
             let combined_flag = format!("{rendered_flag}{val_suffix}");

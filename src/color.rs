@@ -3,7 +3,7 @@
 use crate::style::Style;
 use core::fmt::{self, Formatter};
 
-/// 24 distinct named colors, 8-bit ANSI palette, and 24-bit TrueColor (RGB).
+/// 24 distinct named colors, 8-bit ANSI palette, and 24-bit `TrueColor` (RGB).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Color {
     /// Standard ANSI black.
@@ -59,7 +59,7 @@ pub enum Color {
 
     /// 8-bit ANSI 256-color palette code.
     Ansi256(u8),
-    /// 24-bit TrueColor RGB values (red, green, blue).
+    /// 24-bit `TrueColor` RGB values (red, green, blue).
     Rgb(u8, u8, u8),
 }
 
@@ -73,7 +73,7 @@ impl Color {
         };
 
         match self {
-            Self::Black => write!(f, "{}", base_std),
+            Self::Black => write!(f, "{base_std}"),
             Self::Red => write!(f, "{}", base_std + 1),
             Self::Green => write!(f, "{}", base_std + 2),
             Self::Yellow => write!(f, "{}", base_std + 3),
@@ -82,7 +82,7 @@ impl Color {
             Self::Cyan => write!(f, "{}", base_std + 6),
             Self::White => write!(f, "{}", base_std + 7),
 
-            Self::BrightBlack => write!(f, "{}", base_bright),
+            Self::BrightBlack => write!(f, "{base_bright}"),
             Self::BrightRed => write!(f, "{}", base_bright + 1),
             Self::BrightGreen => write!(f, "{}", base_bright + 2),
             Self::BrightYellow => write!(f, "{}", base_bright + 3),

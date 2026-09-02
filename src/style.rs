@@ -232,7 +232,7 @@ pub struct Styled<'a, T: ?Sized> {
     target: &'a T,
 }
 
-impl<'a, T: Display + ?Sized> Display for Styled<'a, T> {
+impl<T: Display + ?Sized> Display for Styled<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if self.style.is_plain() {
             self.target.fmt(f)
