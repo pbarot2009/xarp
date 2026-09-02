@@ -45,7 +45,7 @@ jobs:
             To use this rolling version directly in your project:
             ```toml
             [dependencies]
-            xarp = { git = "[https://github.com/$](https://github.com/$){{ github.repository }}", branch = "main" }
+            xarp = { git = "https://github.com/{{ github.repository }}", branch = "main" }
             ```
           prerelease: true
           make_latest: false
