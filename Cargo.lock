@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "ramp"
+name = "xarp"
 version = "0.1.0-dev"

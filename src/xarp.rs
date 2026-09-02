@@ -134,21 +134,18 @@ impl<T: std::str::FromStr> FromArgValue for T {
     }
 }
 
-// ============================================================================
-// 3. Ramp CLI Engine
-// ============================================================================
-
+// 3. Xarp CLI Engine
 #[derive(Clone, Debug)]
-pub struct Ramp {
+pub struct Xarp {
     pub name: &'static str,
     pub version: Option<&'static str>,
     pub about: Option<&'static str>,
     pub styles: Styles,
     pub args: Vec<Arg>,
-    pub subcommands: Vec<Ramp>,
+    pub subcommands: Vec<Xarp>,
 }
 
-impl Ramp {
+impl Xarp {
     pub fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -185,7 +182,7 @@ impl Ramp {
         self
     }
 
-    pub fn subcommand(mut self, sub: Ramp) -> Self {
+    pub fn subcommand(mut self, sub: Xarp) -> Self {
         self.subcommands.push(sub);
         self
     }

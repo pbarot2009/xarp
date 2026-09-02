@@ -1,10 +1,15 @@
 [package]
-name = "ramp"
+name = "xarp"
 version = "0.1.0-dev"
 edition = "2024"
+license = "MIT"
+description = "A lightweight, dependency-free CLI styling and argument parser in pure Rust."
+repository = "https://github.com/pbarot2009/xarp"
+readme = "README.md"
+keywords = ["cli", "arguments", "styling", "colors"]
 
 [lib]
-name = "ramp"
+name = "xarp"
 path = "src/lib.rs"
 
 [dependencies]

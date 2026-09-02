@@ -1,7 +1,7 @@
-use ramp::{Arg, ArgAction, Ramp};
+use xarp::{Arg, ArgAction, Xarp};
 
 fn main() {
-    let app = Ramp::new("mycli")
+    let app = Xarp::new("mycli")
         .version("1.0.0")
         .about("A lightning-fast, styled CLI tool")
         // Positional argument
@@ -30,7 +30,7 @@ fn main() {
         )
         // Subcommand
         .subcommand(
-            Ramp::new("build")
+            Xarp::new("build")
                 .about("Compile source packages into binary")
                 .arg(
                     Arg::new("release")
