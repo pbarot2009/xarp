@@ -2,7 +2,7 @@ use xarp::{Arg, ArgAction, Xarp};
 
 fn main() {
     let app = Xarp::new("mycli")
-        .version("1.0.0")
+        .version("0.1.0")
         .about("A lightning-fast, styled CLI tool")
         // Positional argument
         .arg(
