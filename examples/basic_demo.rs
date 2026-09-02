@@ -1,5 +1,7 @@
+//! Doc
 use xarp::{Arg, ArgAction, Xarp};
 
+/// doc comment
 fn main() {
     let app = Xarp::new("mycli")
         .version("0.1.0")
