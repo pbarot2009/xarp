@@ -14,7 +14,7 @@ use xarp::{Arg, ArgAction, Xarp};
 fn main() {
     // 1. Configure the CLI application structure
     let app = Xarp::new("mycli")
-        .version("0.1.0")
+        .version("0.1.1-dev")
         .about("A lightning-fast, styled CLI tool built with xarp")
         // Positional argument:
         // Positionals do not specify short or long flags.

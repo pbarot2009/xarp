@@ -595,7 +595,7 @@ impl Xarp {
 
         let _ = writeln!(out);
 
-        let v_str = self.version.unwrap_or("0.1.1");
+        let v_str = self.version.unwrap_or("0.1.1-dev");
         let name_upper = self.name.to_uppercase();
 
         let _ = write!(
