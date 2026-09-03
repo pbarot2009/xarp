@@ -300,8 +300,13 @@ impl Styles {
     }
 
     /// Default styled CLI theme (Cargo / Clap v4 styled look).
+    /// Automatically returns plain styles if the `NO_COLOR` environment variable is set.
     #[must_use]
-    pub const fn styled() -> Self {
+    pub fn styled() -> Self {
+        if std::env::var_os("NO_COLOR").is_some() {
+            return Self::plain();
+        }
+
         Self {
             header: Style::new().bold().underline(),
             usage: Style::new().bold().underline(),

@@ -4,10 +4,10 @@
 //! - Using preset styling constants (`BOLD`, `GREEN`, `RED`, `INDIGO`).
 //! - Constructing custom text styles with colors, backgrounds, and text effects.
 //! - Operator overloading ergonomics (`Color | Effects`).
-//! - 24-bit TrueColor (RGB) and 8-bit ANSI 256-color palettes.
+//! - 24-bit `TrueColor` (RGB) and 8-bit ANSI 256-color palettes.
 //! - Customizing the help output appearance of `Xarp` using the `Styles` configuration.
 
-use xarp::color::{BOLD, CYAN, Color, GOLD, GREEN, INDIGO, RED, WHITE};
+use xarp::color::{Color, GOLD, GREEN, INDIGO, RED};
 use xarp::effect::Effects;
 use xarp::style::{Style, Styles};
 use xarp::{Arg, ArgAction, Xarp};

@@ -7,6 +7,36 @@ use std::env;
 use std::fmt::Write;
 use std::process;
 
+use std::error::Error;
+use std::fmt::{self, Display};
+
+/// Errors encountered while evaluating command-line arguments.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum XarpError {
+    /// Help documentation requested by the user.
+    Help(String),
+    /// Version details requested by the user.
+    Version(String),
+    /// Argument syntax or validation failure.
+    Parse(String),
+}
+
+impl Display for XarpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Help(msg) | Self::Version(msg) | Self::Parse(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl Error for XarpError {}
+
+impl From<String> for XarpError {
+    fn from(msg: String) -> Self {
+        Self::Parse(msg)
+    }
+}
+
 /// Specifies the parsing action to take when an argument is encountered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArgAction {
@@ -37,6 +67,12 @@ pub struct Arg {
     pub action: ArgAction,
     /// Fallback value used when the argument is not explicitly provided.
     pub default_value: Option<&'static str>,
+    /// Environment variable used when the argument is not explicitly passed.
+    pub env: Option<&'static str>,
+    /// Allowed input choices for the argument value.
+    pub possible_values: Vec<&'static str>,
+    /// IDs of other arguments that cannot be supplied alongside this one.
+    pub conflicts_with: Vec<&'static str>,
 }
 
 impl Arg {
@@ -52,7 +88,31 @@ impl Arg {
             required: false,
             action: ArgAction::Set,
             default_value: None,
+            env: None,
+            possible_values: Vec::new(),
+            conflicts_with: Vec::new(),
         }
+    }
+
+    /// Restricts argument values to a defined set of choices.
+    #[must_use]
+    pub fn possible_values<I: IntoIterator<Item = &'static str>>(mut self, values: I) -> Self {
+        self.possible_values = values.into_iter().collect();
+        self
+    }
+
+    /// Binds an environment variable fallback to the argument.
+    #[must_use]
+    pub fn env(mut self, env_var: &'static str) -> Self {
+        self.env = Some(env_var);
+        self
+    }
+
+    /// Marks an argument identifier as mutually exclusive with this argument.
+    #[must_use]
+    pub fn conflicts_with(mut self, other_id: &'static str) -> Self {
+        self.conflicts_with.push(other_id);
+        self
     }
 
     /// Sets the short character flag.
@@ -244,7 +304,15 @@ impl Xarp {
         let args: Vec<String> = env::args().collect();
         match self.try_get_matches_from(&args) {
             Ok(matches) => matches,
-            Err(err) => {
+            Err(XarpError::Help(msg)) => {
+                print!("{msg}");
+                process::exit(0);
+            }
+            Err(XarpError::Version(msg)) => {
+                println!("{msg}");
+                process::exit(0);
+            }
+            Err(XarpError::Parse(err)) => {
                 eprintln!("{err}");
                 process::exit(2);
             }
@@ -255,10 +323,9 @@ impl Xarp {
     ///
     /// # Errors
     ///
-    /// Returns an error message if an unexpected argument is encountered, a required
-    /// argument is missing, or an option is missing its value.
+    /// Returns [`XarpError`] if parsing fails or when `--help`/`--version` flags are passed.
     #[allow(clippy::too_many_lines)]
-    pub fn try_get_matches_from(self, args: &[String]) -> Result<ArgMatches, String> {
+    pub fn try_get_matches_from(self, args: &[String]) -> Result<ArgMatches, XarpError> {
         let mut matches = ArgMatches::default();
         let tokens = if args.is_empty() { &[] } else { &args[1..] };
 
@@ -327,7 +394,9 @@ impl Xarp {
                     .iter()
                     .find(|a| a.long == Some(name))
                     .ok_or_else(|| {
-                        self.format_error(&format!("unexpected argument '--{name}' found"))
+                        XarpError::Parse(
+                            self.format_error(&format!("unexpected argument '--{name}' found")),
+                        )
                     })?;
 
                 match matched_arg.action {
@@ -340,9 +409,9 @@ impl Xarp {
                         } else {
                             i += 1;
                             if i >= tokens.len() {
-                                return Err(self.format_error(&format!(
+                                return Err(XarpError::Parse(self.format_error(&format!(
                                     "argument '--{name}' requires a value"
-                                )));
+                                ))));
                             }
                             tokens[i].clone()
                         };
@@ -376,9 +445,7 @@ impl Xarp {
                         ArgAction::Set | ArgAction::Append => {
                             // Support attached values (e.g., -p8080) and separated values (e.g., -p 8080)
                             let value = if c_idx + 1 < chars.len() {
-                                let attached: String = chars[c_idx + 1..].iter().collect();
-                                c_idx = chars.len();
-                                attached
+                                chars[c_idx + 1..].iter().collect()
                             } else {
                                 i += 1;
                                 if i >= tokens.len() {
@@ -408,25 +475,69 @@ impl Xarp {
                         .push(token.clone());
                     positional_idx += 1;
                 } else {
-                    return Err(self.format_error(&format!("unexpected argument '{token}' found")));
+                    return Err(XarpError::Parse(
+                        self.format_error(&format!("unexpected argument '{token}' found")),
+                    ));
                 }
             }
 
             i += 1;
         }
 
-        // Apply defaults & verify required arguments
+        // Apply environment variables, defaults, & verify required arguments
         for arg in &effective_args {
-            if !matches.values.contains_key(arg.id) {
-                if let Some(default) = arg.default_value {
+            if !matches.values.contains_key(arg.id) && !matches.flags.contains(arg.id) {
+                if let Some(env_val) = arg.env.and_then(|k| env::var(k).ok()) {
+                    if arg.action == ArgAction::SetTrue {
+                        if env_val == "1" || env_val.eq_ignore_ascii_case("true") {
+                            matches.flags.insert(arg.id.to_string());
+                        }
+                    } else {
+                        matches.values.insert(arg.id.to_string(), vec![env_val]);
+                    }
+                } else if let Some(default) = arg.default_value {
                     matches
                         .values
                         .insert(arg.id.to_string(), vec![default.to_string()]);
                 } else if arg.required {
-                    return Err(self.format_error(&format!(
+                    return Err(XarpError::Parse(self.format_error(&format!(
                         "the required argument '{}' was not provided",
                         arg.id
-                    )));
+                    ))));
+                }
+            }
+        }
+
+        // Validate possible values
+        for arg in &effective_args {
+            if !arg.possible_values.is_empty() {
+                if let Some(vals) = matches.values.get(arg.id) {
+                    for v in vals {
+                        if !arg.possible_values.contains(&v.as_str()) {
+                            let allowed = arg.possible_values.join(", ");
+                            return Err(XarpError::Parse(self.format_error(&format!(
+                                "invalid value '{v}' for '{}'. [possible values: {allowed}]",
+                                arg.id
+                            ))));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Validate conflicting arguments
+        for arg in &effective_args {
+            let is_present = matches.values.contains_key(arg.id) || matches.flags.contains(arg.id);
+            if is_present {
+                for conflict_id in &arg.conflicts_with {
+                    let conflict_present = matches.values.contains_key(*conflict_id)
+                        || matches.flags.contains(*conflict_id);
+                    if conflict_present {
+                        return Err(XarpError::Parse(self.format_error(&format!(
+                            "the argument '{}' cannot be used with '{}'",
+                            arg.id, conflict_id
+                        ))));
+                    }
                 }
             }
         }
