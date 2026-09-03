@@ -42,7 +42,7 @@ fn main() {
         );
 
     let cli = Xarp::new("nexus")
-        .version("0.1.1-dev")
+        .version("0.1.2-dev")
         .about("High-performance service runner and toolchain")
         .arg(
             Arg::new("workers")

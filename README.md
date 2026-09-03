@@ -8,7 +8,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-xarp = "0.1.1-dev"
+xarp = "0.1.2-dev"
 ```
 
 ## Quick Start
@@ -18,7 +18,7 @@ use xarp::{Arg, ArgAction, Xarp};
 
 fn main() {
     let matches = Xarp::new("demo")
-        .version("0.1.1-dev")
+        .version("0.1.2-dev")
         .about("A simple CLI built with xarp")
         .arg(
             Arg::new("verbose")
