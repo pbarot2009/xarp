@@ -290,11 +290,21 @@ impl Xarp {
             .collect();
 
         let mut i = 0;
+        let mut only_positionals = false;
+
         while i < tokens.len() {
             let token = &tokens[i];
 
+            // End of options delimiter: everything after '--' is a positional argument
+            if token == "--" && !only_positionals {
+                only_positionals = true;
+                i += 1;
+                continue;
+            }
+
             // Subcommands
-            if !token.starts_with('-')
+            if !only_positionals
+                && !token.starts_with('-')
                 && positional_idx == 0
                 && let Some(sub) = self.subcommands.iter().find(|s| s.name == token)
             {
@@ -303,14 +313,11 @@ impl Xarp {
                 return Ok(matches);
             }
 
-            // Flags / Options
-            if token == "-h" || token == "--help" {
-                self.print_help();
-                process::exit(0);
-            } else if token == "-V" || token == "--version" {
-                self.print_version();
-                process::exit(0);
-            } else if let Some(long_name) = token.strip_prefix("--") {
+            if !only_positionals && (token == "-h" || token == "--help") {
+                return Err(XarpError::Help(self.render_help()));
+            } else if !only_positionals && (token == "-V" || token == "--version") {
+                return Err(XarpError::Version(self.render_version()));
+            } else if !only_positionals && let Some(long_name) = token.strip_prefix("--") {
                 let (name, inline_val) = match long_name.split_once('=') {
                     Some((k, v)) => (k, Some(v.to_string())),
                     None => (long_name, None),
@@ -346,34 +353,49 @@ impl Xarp {
                             .push(value);
                     }
                 }
-            } else if token.starts_with('-') && token.len() > 1 {
-                let Some(short_char) = token.chars().nth(1) else {
-                    return Err(self.format_error(&format!("unexpected argument '{token}' found")));
-                };
+            } else if !only_positionals && token.starts_with('-') && token.len() > 1 {
+                let chars: Vec<char> = token[1..].chars().collect();
+                let mut c_idx = 0;
 
-                let matched_arg = effective_args
-                    .iter()
-                    .find(|a| a.short == Some(short_char))
-                    .ok_or_else(|| {
-                        self.format_error(&format!("unexpected argument '-{short_char}' found"))
-                    })?;
+                while c_idx < chars.len() {
+                    let short_char = chars[c_idx];
+                    let matched_arg = effective_args
+                        .iter()
+                        .find(|a| a.short == Some(short_char))
+                        .ok_or_else(|| {
+                            XarpError::Parse(self.format_error(&format!(
+                                "unexpected argument '-{short_char}' found"
+                            )))
+                        })?;
 
-                match matched_arg.action {
-                    ArgAction::SetTrue => {
-                        matches.flags.insert(matched_arg.id.to_string());
-                    }
-                    ArgAction::Set | ArgAction::Append => {
-                        i += 1;
-                        if i >= tokens.len() {
-                            return Err(self.format_error(&format!(
-                                "argument '-{short_char}' requires a value"
-                            )));
+                    match matched_arg.action {
+                        ArgAction::SetTrue => {
+                            matches.flags.insert(matched_arg.id.to_string());
+                            c_idx += 1;
                         }
-                        matches
-                            .values
-                            .entry(matched_arg.id.to_string())
-                            .or_default()
-                            .push(tokens[i].clone());
+                        ArgAction::Set | ArgAction::Append => {
+                            // Support attached values (e.g., -p8080) and separated values (e.g., -p 8080)
+                            let value = if c_idx + 1 < chars.len() {
+                                let attached: String = chars[c_idx + 1..].iter().collect();
+                                c_idx = chars.len();
+                                attached
+                            } else {
+                                i += 1;
+                                if i >= tokens.len() {
+                                    return Err(XarpError::Parse(self.format_error(&format!(
+                                        "argument '-{short_char}' requires a value"
+                                    ))));
+                                }
+                                tokens[i].clone()
+                            };
+
+                            matches
+                                .values
+                                .entry(matched_arg.id.to_string())
+                                .or_default()
+                                .push(value);
+                            break;
+                        }
                     }
                 }
             } else {
@@ -412,59 +434,61 @@ impl Xarp {
         Ok(matches)
     }
 
-    /// Prints the application name and version string to standard output.
-    pub fn print_version(&self) {
+    /// Returns the formatted application version string.
+    #[must_use]
+    pub fn render_version(&self) -> String {
         let v = self.version.unwrap_or("unknown");
-        println!(
+        format!(
             "{} {}",
             self.styles.literal.paint(self.name),
             self.styles.placeholder.paint(v)
-        );
+        )
     }
 
-    /// Prints formatted command-line help information to standard output.
+    /// Prints the application name and version string to standard output.
+    pub fn print_version(&self) {
+        println!("{}", self.render_version());
+    }
+
+    /// Renders the complete formatted help guide as a string.
+    #[must_use]
     #[allow(clippy::too_many_lines)]
-    pub fn print_help(&self) {
-        // Headers & Badges
+    pub fn render_help(&self) -> String {
+        let mut out = String::new();
         let bar_accent = Style::new().bold().fg(Color::BrightCyan);
         let badge_name = Style::new().bold().bg(Color::Teal).fg(Color::Black);
         let ver_pill = Style::new().italic().fg(Color::Gold);
         let about_txt = Style::new().fg(Color::Silver);
 
-        // Sections
         let sec_arrow = Style::new().bold().fg(Color::Orange);
         let sec_title = Style::new().bold().underline().fg(Color::BrightWhite);
 
-        // Syntax & Tokens
         let prompt_glyph = Style::new().bold().fg(Color::BrightMagenta);
         let app_cmd = Style::new().bold().fg(Color::White);
         let subcmd_syntax = Style::new().bold().fg(Color::Lime);
         let pos_syntax = Style::new().italic().fg(Color::Gold);
         let opt_syntax = Style::new().dim().fg(Color::BrightCyan);
 
-        // Items
         let cmd_item = Style::new().bold().fg(Color::Lime);
         let arg_item = Style::new().italic().fg(Color::Gold);
         let opt_flag = Style::new().bold().fg(Color::BrightCyan);
         let opt_val = Style::new().fg(Color::Teal);
         let item_help = Style::new().fg(Color::BrightWhite);
 
-        // Metadata Tags
         let req_tag = Style::new().bold().fg(Color::Pink);
         let opt_tag = Style::new().dim().fg(Color::BrightBlack);
         let def_tag = Style::new().fg(Color::Teal).dim();
 
-        // Footer Card
         let tip_badge = Style::new().bold().bg(Color::Indigo).fg(Color::BrightWhite);
         let tip_text = Style::new().dim().fg(Color::Silver);
 
-        println!();
+        let _ = writeln!(out);
 
-        // Accent Bar Header & About
         let v_str = self.version.unwrap_or("0.1.1");
         let name_upper = self.name.to_uppercase();
 
-        print!(
+        let _ = write!(
+            out,
             "{} {}  {} ",
             bar_accent.paint("┃"),
             badge_name.paint(&format!(" {name_upper} ")),
@@ -472,12 +496,12 @@ impl Xarp {
         );
 
         if let Some(about) = self.about {
-            print!(" {}", about_txt.paint(about));
+            let _ = write!(out, " {}", about_txt.paint(about));
         }
-        println!("\n{}", bar_accent.paint("┃"));
+        let _ = writeln!(out, "\n{}", bar_accent.paint("┃"));
 
-        // Syntax Blueprint
-        print!(
+        let _ = write!(
+            out,
             "{} {} {}",
             bar_accent.paint("┃"),
             prompt_glyph.paint("$"),
@@ -485,39 +509,48 @@ impl Xarp {
         );
 
         if self.args.iter().any(|a| !a.is_positional()) {
-            print!(" {}", opt_syntax.paint("[OPTIONS]"));
+            let _ = write!(out, " {}", opt_syntax.paint("[OPTIONS]"));
         }
         for pos in self.args.iter().filter(|a| a.is_positional()) {
             let val = pos.value_name.unwrap_or(pos.id);
             if pos.required {
-                print!(" {}", pos_syntax.paint(&format!("<{val}>")));
+                let _ = write!(out, " {}", pos_syntax.paint(&format!("<{val}>")));
             } else {
-                print!(" {}", opt_syntax.paint(&format!("[{val}]")));
+                let _ = write!(out, " {}", opt_syntax.paint(&format!("[{val}]")));
             }
         }
         if !self.subcommands.is_empty() {
-            print!(" {}", subcmd_syntax.paint("[COMMAND]"));
+            let _ = write!(out, " {}", subcmd_syntax.paint("[COMMAND]"));
         }
-        println!("\n");
+        let _ = writeln!(out, "\n");
 
-        // Subcommands Section
         if !self.subcommands.is_empty() {
-            println!("{} {}", sec_arrow.paint("›"), sec_title.paint("Commands"));
+            let _ = writeln!(
+                out,
+                "{} {}",
+                sec_arrow.paint("›"),
+                sec_title.paint("Commands")
+            );
             for cmd in &self.subcommands {
                 let about = cmd.about.unwrap_or("");
-                println!(
+                let _ = writeln!(
+                    out,
                     "  {: <16}  {}",
                     cmd_item.paint(cmd.name),
                     item_help.paint(about)
                 );
             }
-            println!();
+            let _ = writeln!(out);
         }
 
-        // Positional Arguments Section
         let positionals: Vec<&Arg> = self.args.iter().filter(|a| a.is_positional()).collect();
         if !positionals.is_empty() {
-            println!("{} {}", sec_arrow.paint("›"), sec_title.paint("Arguments"));
+            let _ = writeln!(
+                out,
+                "{} {}",
+                sec_arrow.paint("›"),
+                sec_title.paint("Arguments")
+            );
             for arg in positionals {
                 let name = arg.value_name.unwrap_or(arg.id);
                 let help = arg.help.unwrap_or("");
@@ -527,19 +560,20 @@ impl Xarp {
                     format!("{}", opt_tag.paint("[optional]"))
                 };
 
-                println!(
+                let _ = writeln!(
+                    out,
                     "  {: <16}  {: <44} {}",
                     arg_item.paint(&format!("<{name}>")),
                     item_help.paint(help),
                     status
                 );
             }
-            println!();
+            let _ = writeln!(out);
         }
 
-        // Options & Flags Section
         let options: Vec<&Arg> = self.args.iter().filter(|a| !a.is_positional()).collect();
-        println!(
+        let _ = writeln!(
+            out,
             "{} {}",
             sec_arrow.paint("›"),
             sec_title.paint("Flags & Options")
@@ -574,7 +608,8 @@ impl Xarp {
                 String::new()
             };
 
-            println!(
+            let _ = writeln!(
+                out,
                 "  {: <24}  {: <40} {}",
                 combined_flag,
                 item_help.paint(help),
@@ -582,12 +617,12 @@ impl Xarp {
             );
         }
 
-        // Built-in Defaults
         if !options
             .iter()
             .any(|a| a.short == Some('h') || a.long == Some("help"))
         {
-            println!(
+            let _ = writeln!(
+                out,
                 "  {: <24}  {}",
                 opt_flag.paint("  -h, --help"),
                 item_help.paint("Show this help guide")
@@ -598,17 +633,18 @@ impl Xarp {
                 .iter()
                 .any(|a| a.short == Some('V') || a.long == Some("version"))
         {
-            println!(
+            let _ = writeln!(
+                out,
                 "  {: <24}  {}",
                 opt_flag.paint("  -V, --version"),
                 item_help.paint("Show version number")
             );
         }
 
-        // Subcommand Hint Footer
         if !self.subcommands.is_empty() {
-            println!();
-            println!(
+            let _ = writeln!(out);
+            let _ = writeln!(
+                out,
                 "  {} {} {}{}",
                 tip_badge.paint(" TIP "),
                 tip_text.paint("Run"),
@@ -616,7 +652,14 @@ impl Xarp {
                 tip_text.paint(" for details on a specific subcommand.")
             );
         }
-        println!();
+        let _ = writeln!(out);
+
+        out
+    }
+
+    /// Prints formatted command-line help information to standard output.
+    pub fn print_help(&self) {
+        print!("{}", self.render_help());
     }
 
     fn format_error(&self, msg: &str) -> String {
