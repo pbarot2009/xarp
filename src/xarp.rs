@@ -188,6 +188,9 @@ impl ArgMatches {
     }
 
     /// Gets the first or single value for an argument, parsed into `T`.
+    ///
+    /// Returns `None` both when the argument is absent and when parsing fails.
+    /// Use [`ArgMatches::try_get_one`] to distinguish the two cases.
     #[must_use]
     pub fn get_one<T: FromArgValue>(&self, id: &str) -> Option<T> {
         self.values
@@ -197,11 +200,63 @@ impl ArgMatches {
     }
 
     /// Gets all values supplied for an argument, parsed into `Vec<T>`.
+    ///
+    /// Values that fail to parse are silently skipped.
+    /// Use [`ArgMatches::try_get_many`] to surface parse failures as errors.
     #[must_use]
     pub fn get_many<T: FromArgValue>(&self, id: &str) -> Option<Vec<T>> {
         self.values
             .get(id)
             .map(|vals| vals.iter().filter_map(|v| T::from_arg_value(v)).collect())
+    }
+
+    /// Gets the first or single value for an argument, distinguishing
+    /// missing arguments from parse failures.
+    ///
+    /// * `Ok(None)` — the argument was not supplied.
+    /// * `Ok(Some(v))` — the argument was supplied and parsed successfully.
+    /// * `Err(_)` — the argument was supplied but its value failed to parse into `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`XarpError::Parse`] if a supplied value cannot be parsed into `T`.
+    pub fn try_get_one<T: FromArgValue>(&self, id: &str) -> Result<Option<T>, XarpError> {
+        match self.values.get(id).and_then(|vals| vals.first()) {
+            None => Ok(None),
+            Some(raw) => match T::from_arg_value(raw) {
+                Some(parsed) => Ok(Some(parsed)),
+                None => Err(XarpError::Parse(format!(
+                    "invalid value '{raw}' for '{id}'"
+                ))),
+            },
+        }
+    }
+
+    /// Gets all values supplied for an argument, surfacing parse failures.
+    ///
+    /// Returns `Ok(None)` when the argument was not supplied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`XarpError::Parse`] if any supplied value cannot be parsed into `T`.
+    pub fn try_get_many<T: FromArgValue>(&self, id: &str) -> Result<Option<Vec<T>>, XarpError> {
+        match self.values.get(id) {
+            None => Ok(None),
+            Some(vals) => {
+                let mut out = Vec::with_capacity(vals.len());
+                for raw in vals {
+                    match T::from_arg_value(raw) {
+                        Some(parsed) => out.push(parsed),
+                        None => {
+                            return Err(XarpError::Parse(format!(
+                                "invalid value '{raw}' for '{id}'"
+                            )));
+                        }
+                    }
+                }
+                Ok(Some(out))
+            }
+        }
     }
 
     /// Returns the matched subcommand name and its parsed matches, if present.
@@ -319,6 +374,154 @@ impl Xarp {
         }
     }
 
+    /// Returns `true` for truthy flag values (`"1"` or case-insensitive `"true"`).
+    fn is_truthy(val: &str) -> bool {
+        val == "1" || val.eq_ignore_ascii_case("true")
+    }
+
+    /// Validates argument definitions: duplicate ids, shorts, longs and
+    /// duplicate subcommand names.
+    fn validate_definitions(&self) -> Result<(), XarpError> {
+        let mut ids = HashSet::new();
+        for arg in &self.args {
+            if !ids.insert(arg.id) {
+                return Err(XarpError::Parse(self.format_error(&format!(
+                    "duplicate argument id '{}' found",
+                    arg.id
+                ))));
+            }
+        }
+        let mut shorts = HashSet::new();
+        for arg in &self.args {
+            if let Some(short) = arg.short {
+                if !shorts.insert(short) {
+                    return Err(XarpError::Parse(
+                        self.format_error(&format!("duplicate short flag '-{short}' found")),
+                    ));
+                }
+            }
+        }
+        let mut longs = HashSet::new();
+        for arg in &self.args {
+            if let Some(long) = arg.long {
+                if !longs.insert(long) {
+                    return Err(XarpError::Parse(
+                        self.format_error(&format!("duplicate long flag '--{long}' found")),
+                    ));
+                }
+            }
+        }
+        let mut sub_names = HashSet::new();
+        for sub in &self.subcommands {
+            if !sub_names.insert(sub.name) {
+                return Err(XarpError::Parse(self.format_error(&format!(
+                    "duplicate subcommand '{0}' found",
+                    sub.name
+                ))));
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies environment fallbacks and default values.
+    ///
+    /// Arguments already present from CLI parsing are left untouched.
+    /// Values coming from the environment count as explicit (they satisfy
+    /// `required` and participate in conflict detection); `default_value`s
+    /// do not. A `SetTrue` default only sets the flag when truthy.
+    /// An explicitly falsy environment value for `SetTrue` overrides any
+    /// default and (when `skip_required` is false) still enforces `required`.
+    #[allow(clippy::too_many_lines)]
+    fn apply_env_defaults(
+        &self,
+        effective_args: &[Arg],
+        matches: &mut ArgMatches,
+        explicit: &mut HashSet<String>,
+        skip_required: bool,
+    ) -> Result<(), XarpError> {
+        for arg in effective_args {
+            if matches.values.contains_key(arg.id) || matches.flags.contains(arg.id) {
+                continue;
+            }
+            if let Some(env_key) = arg.env {
+                if let Ok(env_val) = env::var(env_key) {
+                    if arg.action == ArgAction::SetTrue {
+                        if Self::is_truthy(&env_val) {
+                            matches.flags.insert(arg.id.to_string());
+                            explicit.insert(arg.id.to_string());
+                        } else if arg.required && !skip_required {
+                            return Err(XarpError::Parse(self.format_error(&format!(
+                                "the required argument '{}' was not provided",
+                                arg.id
+                            ))));
+                        }
+                        // Falsy env overrides any default: do not fall through.
+                        continue;
+                    }
+                    matches.values.insert(arg.id.to_string(), vec![env_val]);
+                    explicit.insert(arg.id.to_string());
+                    continue;
+                }
+                // Env var unset: fall through to defaults/required.
+            }
+            if let Some(default) = arg.default_value {
+                if arg.action == ArgAction::SetTrue {
+                    if Self::is_truthy(default) {
+                        matches.flags.insert(arg.id.to_string());
+                    }
+                } else {
+                    matches
+                        .values
+                        .insert(arg.id.to_string(), vec![default.to_string()]);
+                }
+            } else if arg.required && !skip_required {
+                return Err(XarpError::Parse(self.format_error(&format!(
+                    "the required argument '{}' was not provided",
+                    arg.id
+                ))));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates `possible_values` (including defaults/env) and
+    /// `conflicts_with` (explicit CLI/env selections only, never defaults).
+    fn validate_values(
+        &self,
+        effective_args: &[Arg],
+        matches: &ArgMatches,
+        explicit: &HashSet<String>,
+    ) -> Result<(), XarpError> {
+        for arg in effective_args {
+            if !arg.possible_values.is_empty() {
+                if let Some(vals) = matches.values.get(arg.id) {
+                    for v in vals {
+                        if !arg.possible_values.contains(&v.as_str()) {
+                            let allowed = arg.possible_values.join(", ");
+                            return Err(XarpError::Parse(self.format_error(&format!(
+                                "invalid value '{v}' for '{}'. [possible values: {allowed}]",
+                                arg.id
+                            ))));
+                        }
+                    }
+                }
+            }
+        }
+        for arg in effective_args {
+            if explicit.contains(arg.id) {
+                for conflict_id in &arg.conflicts_with {
+                    if explicit.contains(*conflict_id) {
+                        return Err(XarpError::Parse(self.format_error(&format!(
+                            "the argument '{}' cannot be used with '{}'",
+                            arg.id, conflict_id
+                        ))));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Attempts to parse arguments from a string slice without exiting on error.
     ///
     /// # Errors
@@ -326,12 +529,20 @@ impl Xarp {
     /// Returns [`XarpError`] if parsing fails or when `--help`/`--version` flags are passed.
     #[allow(clippy::too_many_lines)]
     pub fn try_get_matches_from(self, args: &[String]) -> Result<ArgMatches, XarpError> {
+        self.validate_definitions()?;
         let mut matches = ArgMatches::default();
+        // Tracks arguments explicitly selected via CLI or environment.
+        // Defaults never count as explicit (see `apply_env_defaults`).
+        let mut explicit: HashSet<String> = HashSet::new();
         let tokens = if args.is_empty() { &[] } else { &args[1..] };
 
-        // Inject default built-in help and version flags
+        // Inject default built-in help and version flags, avoiding collisions
+        // with user-defined ids, shorts or longs.
         let mut effective_args = self.args.clone();
-        if !effective_args.iter().any(|a| a.id == "help") {
+        let has_help_collision = effective_args
+            .iter()
+            .any(|a| a.id == "help" || a.short == Some('h') || a.long == Some("help"));
+        if !has_help_collision {
             effective_args.push(
                 Arg::new("help")
                     .short('h')
@@ -340,7 +551,10 @@ impl Xarp {
                     .action(ArgAction::SetTrue),
             );
         }
-        if self.version.is_some() && !effective_args.iter().any(|a| a.id == "version") {
+        let has_version_collision = effective_args
+            .iter()
+            .any(|a| a.id == "version" || a.short == Some('V') || a.long == Some("version"));
+        if self.version.is_some() && !has_version_collision {
             effective_args.push(
                 Arg::new("version")
                     .short('V')
@@ -355,6 +569,17 @@ impl Xarp {
             .iter()
             .filter(|a| a.is_positional())
             .collect();
+        // Only the last positional may collect multiple values.
+        if positional_args.len() > 1 {
+            for (idx, pos) in positional_args.iter().enumerate() {
+                if pos.action == ArgAction::Append && idx + 1 != positional_args.len() {
+                    return Err(XarpError::Parse(self.format_error(&format!(
+                        "the argument '{}' with Append action must be the last positional",
+                        pos.id
+                    ))));
+                }
+            }
+        }
 
         let mut i = 0;
         let mut only_positionals = false;
@@ -369,12 +594,20 @@ impl Xarp {
                 continue;
             }
 
-            // Subcommands
+            // Subcommands take precedence over positionals. A positional value
+            // equal to a subcommand name can still be forced with `--`
+            // (which sets `only_positionals` and skips this branch).
             if !only_positionals
                 && !token.starts_with('-')
                 && positional_idx == 0
                 && let Some(sub) = self.subcommands.iter().find(|s| s.name == token)
             {
+                // Finalize parent selections (defaults/env + validation) so
+                // `get_one` defaults remain available in subcommand mode.
+                // Parent `required` args are skipped: the subcommand is an
+                // alternative command, not an extension of the parent.
+                self.apply_env_defaults(&effective_args, &mut matches, &mut explicit, true)?;
+                self.validate_values(&effective_args, &matches, &explicit)?;
                 let sub_matches = sub.clone().try_get_matches_from(&tokens[i..])?;
                 matches.subcommand = Some((sub.name.to_string(), Box::new(sub_matches)));
                 return Ok(matches);
@@ -402,8 +635,27 @@ impl Xarp {
                 match matched_arg.action {
                     ArgAction::SetTrue => {
                         matches.flags.insert(matched_arg.id.to_string());
+                        explicit.insert(matched_arg.id.to_string());
                     }
-                    ArgAction::Set | ArgAction::Append => {
+                    ArgAction::Set => {
+                        let value = if let Some(val) = inline_val {
+                            val
+                        } else {
+                            i += 1;
+                            if i >= tokens.len() {
+                                return Err(XarpError::Parse(self.format_error(&format!(
+                                    "argument '--{name}' requires a value"
+                                ))));
+                            }
+                            tokens[i].clone()
+                        };
+                        // Single-value options: last occurrence wins.
+                        matches
+                            .values
+                            .insert(matched_arg.id.to_string(), vec![value]);
+                        explicit.insert(matched_arg.id.to_string());
+                    }
+                    ArgAction::Append => {
                         let value = if let Some(val) = inline_val {
                             val
                         } else {
@@ -420,6 +672,7 @@ impl Xarp {
                             .entry(matched_arg.id.to_string())
                             .or_default()
                             .push(value);
+                        explicit.insert(matched_arg.id.to_string());
                     }
                 }
             } else if !only_positionals && token.starts_with('-') && token.len() > 1 {
@@ -440,12 +693,14 @@ impl Xarp {
                     match matched_arg.action {
                         ArgAction::SetTrue => {
                             matches.flags.insert(matched_arg.id.to_string());
+                            explicit.insert(matched_arg.id.to_string());
                             c_idx += 1;
                         }
                         ArgAction::Set | ArgAction::Append => {
-                            // Support attached values (e.g., -p8080) and separated values (e.g., -p 8080)
-                            let value = if c_idx + 1 < chars.len() {
-                                chars[c_idx + 1..].iter().collect()
+                            // Support attached values (e.g., -p8080) and separated values (e.g., -p 8080).
+                            // A leading '=' is stripped so `-p=8080` behaves like `--port=8080`.
+                            let raw_value = if c_idx + 1 < chars.len() {
+                                chars[c_idx + 1..].iter().collect::<String>()
                             } else {
                                 i += 1;
                                 if i >= tokens.len() {
@@ -455,25 +710,60 @@ impl Xarp {
                                 }
                                 tokens[i].clone()
                             };
+                            let value = raw_value
+                                .strip_prefix('=')
+                                .unwrap_or(&raw_value)
+                                .to_string();
 
-                            matches
-                                .values
-                                .entry(matched_arg.id.to_string())
-                                .or_default()
-                                .push(value);
+                            if matched_arg.action == ArgAction::Set {
+                                matches
+                                    .values
+                                    .insert(matched_arg.id.to_string(), vec![value]);
+                            } else {
+                                matches
+                                    .values
+                                    .entry(matched_arg.id.to_string())
+                                    .or_default()
+                                    .push(value);
+                            }
+                            explicit.insert(matched_arg.id.to_string());
                             break;
                         }
                     }
                 }
             } else {
-                // Positional Argument
+                // Positional Argument: behavior depends on the declared action.
+                // `Set` consumes one slot, `Append` (only allowed last)
+                // collects all remaining positionals, `SetTrue` records
+                // presence as a flag.
                 if let Some(pos_arg) = positional_args.get(positional_idx) {
-                    matches
-                        .values
-                        .entry(pos_arg.id.to_string())
-                        .or_default()
-                        .push(token.clone());
-                    positional_idx += 1;
+                    let pos_id = pos_arg.id.to_string();
+                    let pos_action = pos_arg.action;
+                    match pos_action {
+                        ArgAction::SetTrue => {
+                            matches.flags.insert(pos_id.clone());
+                            explicit.insert(pos_id);
+                            positional_idx += 1;
+                        }
+                        ArgAction::Set => {
+                            matches
+                                .values
+                                .entry(pos_id.clone())
+                                .or_default()
+                                .push(token.clone());
+                            explicit.insert(pos_id);
+                            positional_idx += 1;
+                        }
+                        ArgAction::Append => {
+                            matches
+                                .values
+                                .entry(pos_id.clone())
+                                .or_default()
+                                .push(token.clone());
+                            explicit.insert(pos_id);
+                            // Stay on the same index to collect further values.
+                        }
+                    }
                 } else {
                     return Err(XarpError::Parse(
                         self.format_error(&format!("unexpected argument '{token}' found")),
@@ -484,63 +774,11 @@ impl Xarp {
             i += 1;
         }
 
-        // Apply environment variables, defaults, & verify required arguments
-        for arg in &effective_args {
-            if !matches.values.contains_key(arg.id) && !matches.flags.contains(arg.id) {
-                if let Some(env_val) = arg.env.and_then(|k| env::var(k).ok()) {
-                    if arg.action == ArgAction::SetTrue {
-                        if env_val == "1" || env_val.eq_ignore_ascii_case("true") {
-                            matches.flags.insert(arg.id.to_string());
-                        }
-                    } else {
-                        matches.values.insert(arg.id.to_string(), vec![env_val]);
-                    }
-                } else if let Some(default) = arg.default_value {
-                    matches
-                        .values
-                        .insert(arg.id.to_string(), vec![default.to_string()]);
-                } else if arg.required {
-                    return Err(XarpError::Parse(self.format_error(&format!(
-                        "the required argument '{}' was not provided",
-                        arg.id
-                    ))));
-                }
-            }
-        }
-
-        // Validate possible values
-        for arg in &effective_args {
-            if !arg.possible_values.is_empty() {
-                if let Some(vals) = matches.values.get(arg.id) {
-                    for v in vals {
-                        if !arg.possible_values.contains(&v.as_str()) {
-                            let allowed = arg.possible_values.join(", ");
-                            return Err(XarpError::Parse(self.format_error(&format!(
-                                "invalid value '{v}' for '{}'. [possible values: {allowed}]",
-                                arg.id
-                            ))));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Validate conflicting arguments
-        for arg in &effective_args {
-            let is_present = matches.values.contains_key(arg.id) || matches.flags.contains(arg.id);
-            if is_present {
-                for conflict_id in &arg.conflicts_with {
-                    let conflict_present = matches.values.contains_key(*conflict_id)
-                        || matches.flags.contains(*conflict_id);
-                    if conflict_present {
-                        return Err(XarpError::Parse(self.format_error(&format!(
-                            "the argument '{}' cannot be used with '{}'",
-                            arg.id, conflict_id
-                        ))));
-                    }
-                }
-            }
-        }
+        // Apply environment variables, defaults, and required checks,
+        // then validate possible values (all sources) and conflicts
+        // (explicit selections only).
+        self.apply_env_defaults(&effective_args, &mut matches, &mut explicit, false)?;
+        self.validate_values(&effective_args, &matches, &explicit)?;
 
         Ok(matches)
     }
