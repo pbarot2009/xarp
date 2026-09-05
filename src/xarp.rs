@@ -1,7 +1,4 @@
-use crate::{
-    color::Color,
-    style::{Style, Styles},
-};
+use crate::style::{Style, Styles};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt::Write;
@@ -563,6 +560,11 @@ impl Xarp {
                     .action(ArgAction::SetTrue),
             );
         }
+        // Whether the built-in help/version handlers are active. When the user
+        // defines a colliding id/short/long we skip injection and treat
+        // `-h`/`--help`/`-V`/`--version` as ordinary arguments (no hijack).
+        let help_injected = !has_help_collision;
+        let version_injected = self.version.is_some() && !has_version_collision;
 
         let mut positional_idx = 0;
         let positional_args: Vec<&Arg> = effective_args
@@ -613,11 +615,7 @@ impl Xarp {
                 return Ok(matches);
             }
 
-            if !only_positionals && (token == "-h" || token == "--help") {
-                return Err(XarpError::Help(self.render_help()));
-            } else if !only_positionals && (token == "-V" || token == "--version") {
-                return Err(XarpError::Version(self.render_version()));
-            } else if !only_positionals && let Some(long_name) = token.strip_prefix("--") {
+            if !only_positionals && let Some(long_name) = token.strip_prefix("--") {
                 let (name, inline_val) = match long_name.split_once('=') {
                     Some((k, v)) => (k, Some(v.to_string())),
                     None => (long_name, None),
@@ -631,6 +629,21 @@ impl Xarp {
                             self.format_error(&format!("unexpected argument '--{name}' found")),
                         )
                     })?;
+
+                // Flags never take `=value`. Reject `--flag=value` for `SetTrue`
+                // instead of silently ignoring the value.
+                if matched_arg.action == ArgAction::SetTrue && inline_val.is_some() {
+                    return Err(XarpError::Parse(self.format_error(&format!(
+                        "argument '--{name}' does not take a value"
+                    ))));
+                }
+                // Built-in handlers only when injected (no user override).
+                if matched_arg.id == "help" && help_injected {
+                    return Err(XarpError::Help(self.render_help()));
+                }
+                if matched_arg.id == "version" && version_injected {
+                    return Err(XarpError::Version(self.render_version()));
+                }
 
                 match matched_arg.action {
                     ArgAction::SetTrue => {
@@ -692,6 +705,14 @@ impl Xarp {
 
                     match matched_arg.action {
                         ArgAction::SetTrue => {
+                            // Built-in handlers work bundled too (`-vh` shows help).
+                            // User overrides (no injection) behave as ordinary flags.
+                            if matched_arg.id == "help" && help_injected {
+                                return Err(XarpError::Help(self.render_help()));
+                            }
+                            if matched_arg.id == "version" && version_injected {
+                                return Err(XarpError::Version(self.render_version()));
+                            }
                             matches.flags.insert(matched_arg.id.to_string());
                             explicit.insert(matched_arg.id.to_string());
                             c_idx += 1;
@@ -800,40 +821,48 @@ impl Xarp {
     }
 
     /// Renders the complete formatted help guide as a string.
+    ///
+    /// All coloring comes from `self.styles`, so `Styles::plain()` (or
+    /// `NO_COLOR`) yields plain output and custom themes are honored.
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn render_help(&self) -> String {
         let mut out = String::new();
-        let bar_accent = Style::new().bold().fg(Color::BrightCyan);
-        let badge_name = Style::new().bold().bg(Color::Teal).fg(Color::Black);
-        let ver_pill = Style::new().italic().fg(Color::Gold);
-        let about_txt = Style::new().fg(Color::Silver);
+        // Theme roles: header for structure, literal for commands/flags,
+        // placeholder for values, usage for usage syntax, muted for secondary
+        // notes, warning for required markers, valid for tips.
+        let bar_accent = self.styles.header;
+        let badge_name = self.styles.literal;
+        let ver_pill = self.styles.placeholder;
+        let about_txt = self.styles.muted;
 
-        let sec_arrow = Style::new().bold().fg(Color::Orange);
-        let sec_title = Style::new().bold().underline().fg(Color::BrightWhite);
+        let sec_arrow = self.styles.header;
+        let sec_title = self.styles.header;
 
-        let prompt_glyph = Style::new().bold().fg(Color::BrightMagenta);
-        let app_cmd = Style::new().bold().fg(Color::White);
-        let subcmd_syntax = Style::new().bold().fg(Color::Lime);
-        let pos_syntax = Style::new().italic().fg(Color::Gold);
-        let opt_syntax = Style::new().dim().fg(Color::BrightCyan);
+        let prompt_glyph = self.styles.muted;
+        let app_cmd = self.styles.literal;
+        let subcmd_syntax = self.styles.usage;
+        let pos_syntax = self.styles.placeholder;
+        let opt_syntax = self.styles.usage;
 
-        let cmd_item = Style::new().bold().fg(Color::Lime);
-        let arg_item = Style::new().italic().fg(Color::Gold);
-        let opt_flag = Style::new().bold().fg(Color::BrightCyan);
-        let opt_val = Style::new().fg(Color::Teal);
-        let item_help = Style::new().fg(Color::BrightWhite);
+        let cmd_item = self.styles.literal;
+        let arg_item = self.styles.placeholder;
+        let opt_flag = self.styles.literal;
+        let opt_val = self.styles.placeholder;
+        // Descriptions stay unstyled (as in Clap) so they remain readable
+        // under any theme and are plain when `Styles::plain()` is used.
+        let item_help = Style::new();
 
-        let req_tag = Style::new().bold().fg(Color::Pink);
-        let opt_tag = Style::new().dim().fg(Color::BrightBlack);
-        let def_tag = Style::new().fg(Color::Teal).dim();
+        let req_tag = self.styles.warning;
+        let opt_tag = self.styles.muted;
+        let def_tag = self.styles.muted;
 
-        let tip_badge = Style::new().bold().bg(Color::Indigo).fg(Color::BrightWhite);
-        let tip_text = Style::new().dim().fg(Color::Silver);
+        let tip_badge = self.styles.valid;
+        let tip_text = self.styles.muted;
 
         let _ = writeln!(out);
 
-        let v_str = self.version.unwrap_or("0.1.2-dev");
+        let v_str = self.version.unwrap_or("unknown");
         let name_upper = self.name.to_uppercase();
 
         let _ = write!(
@@ -882,12 +911,9 @@ impl Xarp {
             );
             for cmd in &self.subcommands {
                 let about = cmd.about.unwrap_or("");
-                let _ = writeln!(
-                    out,
-                    "  {: <16}  {}",
-                    cmd_item.paint(cmd.name),
-                    item_help.paint(about)
-                );
+                // Pad plain text before painting so ANSI codes don't break alignment.
+                let name_padded = format!("{: <16}", cmd.name);
+                let _ = writeln!(out, "  {}  {about}", cmd_item.paint(&name_padded),);
             }
             let _ = writeln!(out);
         }
@@ -903,18 +929,49 @@ impl Xarp {
             for arg in positionals {
                 let name = arg.value_name.unwrap_or(arg.id);
                 let help = arg.help.unwrap_or("");
-                let status = if arg.required {
+                let mut notes = if arg.required {
                     format!("{}", req_tag.paint("[required]"))
                 } else {
                     format!("{}", opt_tag.paint("[optional]"))
                 };
+                if let Some(def) = arg.default_value {
+                    let _ = write!(
+                        notes,
+                        " {}",
+                        def_tag.paint(&format!("(default: \"{def}\")"))
+                    );
+                }
+                if !arg.possible_values.is_empty() {
+                    let allowed = arg.possible_values.join(", ");
+                    let _ = write!(
+                        notes,
+                        " {}",
+                        def_tag.paint(&format!("[possible values: {allowed}]"))
+                    );
+                }
+                if let Some(env_key) = arg.env {
+                    let _ = write!(notes, " {}", def_tag.paint(&format!("[env: {env_key}]")));
+                }
+                if arg.conflicts_with.len() == 1 {
+                    let _ = write!(
+                        notes,
+                        " {}",
+                        def_tag.paint(&format!("[conflicts: {}]", arg.conflicts_with[0]))
+                    );
+                } else if !arg.conflicts_with.is_empty() {
+                    let list = arg.conflicts_with.join(", ");
+                    let _ = write!(notes, " {}", def_tag.paint(&format!("[conflicts: {list}]")));
+                }
 
+                // Pad plain values before painting for correct columns.
+                let name_padded = format!("{: <16}", format!("<{name}>"));
+                let help_padded = format!("{help:<44}");
                 let _ = writeln!(
                     out,
-                    "  {: <16}  {: <44} {}",
-                    arg_item.paint(&format!("<{name}>")),
-                    item_help.paint(help),
-                    status
+                    "  {}  {} {}",
+                    arg_item.paint(&name_padded),
+                    item_help.paint(&help_padded),
+                    notes
                 );
             }
             let _ = writeln!(out);
@@ -938,31 +995,76 @@ impl Xarp {
             if let Some(l) = arg.long {
                 let _ = write!(syntax, "--{l}");
             }
-
-            let rendered_flag = opt_flag.paint(&syntax);
-            let val_suffix = if arg.action == ArgAction::SetTrue {
+            let val_plain = if arg.action == ArgAction::SetTrue {
                 String::new()
             } else {
-                format!(
-                    " {}",
-                    opt_val.paint(&format!("<{}>", arg.value_name.unwrap_or("VAL")))
-                )
+                format!(" <{}>", arg.value_name.unwrap_or("VAL"))
             };
+            // Align on visible width (plain lengths), then paint parts.
+            let visible_len = syntax.len() + val_plain.len();
+            let pad = " ".repeat(24usize.saturating_sub(visible_len));
+            let rendered = format!(
+                "{}{val_painted}{pad}",
+                opt_flag.paint(&syntax),
+                val_painted = if val_plain.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}", opt_val.paint(&val_plain))
+                }
+            );
 
-            let combined_flag = format!("{rendered_flag}{val_suffix}");
             let help = arg.help.unwrap_or("");
-            let default_note = if let Some(def) = arg.default_value {
-                format!("{}", def_tag.paint(&format!("(default: \"{def}\")")))
-            } else {
-                String::new()
-            };
+            let help_padded = format!("{help:<40}");
+            let mut notes = String::new();
+            if arg.required {
+                let _ = write!(notes, "{}", req_tag.paint("[required]"));
+            }
+            if let Some(def) = arg.default_value {
+                if !notes.is_empty() {
+                    notes.push(' ');
+                }
+                let _ = write!(notes, "{}", def_tag.paint(&format!("(default: \"{def}\")")));
+            }
+            if !arg.possible_values.is_empty() {
+                if !notes.is_empty() {
+                    notes.push(' ');
+                }
+                let allowed = arg.possible_values.join(", ");
+                let _ = write!(
+                    notes,
+                    "{}",
+                    def_tag.paint(&format!("[possible values: {allowed}]"))
+                );
+            }
+            if let Some(env_key) = arg.env {
+                if !notes.is_empty() {
+                    notes.push(' ');
+                }
+                let _ = write!(notes, "{}", def_tag.paint(&format!("[env: {env_key}]")));
+            }
+            if arg.conflicts_with.len() == 1 {
+                if !notes.is_empty() {
+                    notes.push(' ');
+                }
+                let _ = write!(
+                    notes,
+                    "{}",
+                    def_tag.paint(&format!("[conflicts: {}]", arg.conflicts_with[0]))
+                );
+            } else if !arg.conflicts_with.is_empty() {
+                if !notes.is_empty() {
+                    notes.push(' ');
+                }
+                let list = arg.conflicts_with.join(", ");
+                let _ = write!(notes, "{}", def_tag.paint(&format!("[conflicts: {list}]")));
+            }
 
             let _ = writeln!(
                 out,
-                "  {: <24}  {: <40} {}",
-                combined_flag,
-                item_help.paint(help),
-                default_note
+                "  {}  {} {}",
+                rendered,
+                item_help.paint(&help_padded),
+                notes
             );
         }
 
@@ -970,11 +1072,14 @@ impl Xarp {
             .iter()
             .any(|a| a.short == Some('h') || a.long == Some("help"))
         {
+            let syntax = "  -h, --help";
+            let pad = " ".repeat(24usize.saturating_sub(syntax.len()));
             let _ = writeln!(
                 out,
-                "  {: <24}  {}",
-                opt_flag.paint("  -h, --help"),
-                item_help.paint("Show this help guide")
+                "  {}{}  {} ",
+                opt_flag.paint(&syntax),
+                pad,
+                item_help.paint(&format!("{:<40}", "Show this help guide")),
             );
         }
         if self.version.is_some()
@@ -982,11 +1087,14 @@ impl Xarp {
                 .iter()
                 .any(|a| a.short == Some('V') || a.long == Some("version"))
         {
+            let syntax = "  -V, --version";
+            let pad = " ".repeat(24usize.saturating_sub(syntax.len()));
             let _ = writeln!(
                 out,
-                "  {: <24}  {}",
-                opt_flag.paint("  -V, --version"),
-                item_help.paint("Show version number")
+                "  {}{}  {} ",
+                opt_flag.paint(&syntax),
+                pad,
+                item_help.paint(&format!("{:<40}", "Show version number")),
             );
         }
 
