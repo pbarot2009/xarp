@@ -1665,4 +1665,738 @@ mod tests {
         let no_version = Xarp::new("t").about("x").render_help();
         assert!(no_version.contains("vunknown"));
     }
+
+    #[test]
+    fn long_space_separated_value_is_captured() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt"))
+            .try_get_matches_from(&argv(&["t", "--opt", "val"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some("val".to_string()));
+    }
+
+    #[test]
+    fn long_equals_value_is_captured() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt"))
+            .try_get_matches_from(&argv(&["t", "--opt=val"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some("val".to_string()));
+    }
+
+    #[test]
+    fn long_equals_empty_value_is_empty_string() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt"))
+            .try_get_matches_from(&argv(&["t", "--opt="]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some(String::new()));
+    }
+
+    #[test]
+    fn long_missing_value_at_end_errors() {
+        let result = Xarp::new("t")
+            .arg(Arg::new("o").long("opt"))
+            .try_get_matches_from(&argv(&["t", "--opt"]));
+        assert!(matches!(result, Err(XarpError::Parse(_))));
+    }
+
+    #[test]
+    fn long_unknown_flag_errors() {
+        let result = Xarp::new("t").try_get_matches_from(&argv(&["t", "--nope"]));
+        let error = result.unwrap_err();
+        assert!(error.is_parse());
+        assert!(error.to_string().contains("--nope"));
+    }
+
+    #[test]
+    fn long_value_may_start_with_a_dash() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("n").long("num"))
+            .try_get_matches_from(&argv(&["t", "--num", "-1"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("n"), Some("-1".to_string()));
+    }
+
+    #[test]
+    fn long_append_collects_every_occurrence() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("h").long("header").action(ArgAction::Append))
+            .try_get_matches_from(&argv(&["t", "--header", "a", "--header=b"]))
+            .unwrap();
+        assert_eq!(
+            matches.get_many::<String>("h"),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn long_set_overwrites_across_forms() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt"))
+            .try_get_matches_from(&argv(&["t", "--opt", "a", "--opt=b"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some("b".to_string()));
+        assert_eq!(matches.get_many::<String>("o"), Some(vec!["b".to_string()]));
+    }
+
+    #[test]
+    fn possible_values_accept_and_reject() {
+        let ok = Xarp::new("t")
+            .arg(Arg::new("m").long("mode").possible_values(["fast", "safe"]))
+            .try_get_matches_from(&argv(&["t", "--mode", "safe"]))
+            .unwrap();
+        assert_eq!(ok.get_one::<String>("m"), Some("safe".to_string()));
+        let bad = Xarp::new("t")
+            .arg(Arg::new("m").long("mode").possible_values(["fast", "safe"]))
+            .try_get_matches_from(&argv(&["t", "--mode", "wild"]));
+        assert!(matches!(bad, Err(XarpError::Parse(_))));
+    }
+
+    #[test]
+    fn invalid_default_against_possible_values_errors() {
+        let result = Xarp::new("t")
+            .arg(
+                Arg::new("m")
+                    .long("mode")
+                    .possible_values(["fast", "safe"])
+                    .default_value("wild"),
+            )
+            .try_get_matches_from(&argv(&["t"]));
+        assert!(matches!(result, Err(XarpError::Parse(_))));
+    }
+
+    #[test]
+    fn short_separate_and_attached_values() {
+        let separate = Xarp::new("t")
+            .arg(Arg::new("p").short('p'))
+            .try_get_matches_from(&argv(&["t", "-p", "8080"]))
+            .unwrap();
+        assert_eq!(separate.get_one::<String>("p"), Some("8080".to_string()));
+        let attached = Xarp::new("t")
+            .arg(Arg::new("p").short('p'))
+            .try_get_matches_from(&argv(&["t", "-p8080"]))
+            .unwrap();
+        assert_eq!(attached.get_one::<String>("p"), Some("8080".to_string()));
+    }
+
+    #[test]
+    fn short_attached_equals_edge_cases() {
+        let empty = Xarp::new("t")
+            .arg(Arg::new("p").short('p'))
+            .try_get_matches_from(&argv(&["t", "-p="]))
+            .unwrap();
+        assert_eq!(empty.get_one::<String>("p"), Some(String::new()));
+        let doubled = Xarp::new("t")
+            .arg(Arg::new("p").short('p'))
+            .try_get_matches_from(&argv(&["t", "-p==x"]))
+            .unwrap();
+        assert_eq!(doubled.get_one::<String>("p"), Some("=x".to_string()));
+    }
+
+    #[test]
+    fn short_missing_and_unknown_flag_errors() {
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("p").short('p'))
+                .try_get_matches_from(&argv(&["t", "-p"]))
+                .is_err()
+        );
+        let unknown = Xarp::new("t").try_get_matches_from(&argv(&["t", "-z"]));
+        let error = unknown.unwrap_err();
+        assert!(error.is_parse());
+        assert!(error.to_string().contains("-z"));
+    }
+
+    #[test]
+    fn short_flags_bundle_together() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("a").short('a').action(ArgAction::SetTrue))
+            .arg(Arg::new("b").short('b').action(ArgAction::SetTrue))
+            .try_get_matches_from(&argv(&["t", "-ab"]))
+            .unwrap();
+        assert!(matches.get_flag("a"));
+        assert!(matches.get_flag("b"));
+    }
+
+    #[test]
+    fn short_bundle_with_trailing_value() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("v").short('v').action(ArgAction::SetTrue))
+            .arg(Arg::new("p").short('p'))
+            .try_get_matches_from(&argv(&["t", "-vp8080"]))
+            .unwrap();
+        assert!(matches.get_flag("v"));
+        assert_eq!(matches.get_one::<String>("p"), Some("8080".to_string()));
+    }
+
+    #[test]
+    fn short_set_last_wins_and_append_collects() {
+        let set = Xarp::new("t")
+            .arg(Arg::new("p").short('p'))
+            .try_get_matches_from(&argv(&["t", "-p", "a", "-p", "b"]))
+            .unwrap();
+        assert_eq!(set.get_one::<String>("p"), Some("b".to_string()));
+        let append = Xarp::new("t")
+            .arg(Arg::new("h").short('H').action(ArgAction::Append))
+            .try_get_matches_from(&argv(&["t", "-H", "a", "-Hb"]))
+            .unwrap();
+        assert_eq!(
+            append.get_many::<String>("h"),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn short_value_may_start_with_a_dash() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("p").short('p'))
+            .try_get_matches_from(&argv(&["t", "-p", "-1"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("p"), Some("-1".to_string()));
+    }
+
+    #[test]
+    fn lone_dash_is_a_positional_value() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("input"))
+            .try_get_matches_from(&argv(&["t", "-"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("input"), Some("-".to_string()));
+    }
+
+    #[test]
+    fn lone_dash_without_positionals_errors() {
+        assert!(
+            Xarp::new("t")
+                .try_get_matches_from(&argv(&["t", "-"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn multiple_positionals_bind_in_order() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("src"))
+            .arg(Arg::new("dst"))
+            .try_get_matches_from(&argv(&["t", "a.txt", "b.txt"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("src"), Some("a.txt".to_string()));
+        assert_eq!(matches.get_one::<String>("dst"), Some("b.txt".to_string()));
+    }
+
+    #[test]
+    fn missing_required_positional_errors() {
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("input").required(true))
+                .try_get_matches_from(&argv(&["t"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn unexpected_extra_positional_errors() {
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("input"))
+                .try_get_matches_from(&argv(&["t", "a", "b"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn optional_positional_may_be_omitted() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("input"))
+            .try_get_matches_from(&argv(&["t"]))
+            .unwrap();
+        assert!(matches.get_one::<String>("input").is_none());
+    }
+
+    #[test]
+    fn default_fills_omitted_positional() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("input").default_value("stdin"))
+            .try_get_matches_from(&argv(&["t"]))
+            .unwrap();
+        assert_eq!(
+            matches.get_one::<String>("input"),
+            Some("stdin".to_string())
+        );
+    }
+
+    #[test]
+    fn possible_values_apply_to_positionals() {
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("mode").possible_values(["x", "y"]))
+                .try_get_matches_from(&argv(&["t", "z"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn non_last_append_positional_is_rejected() {
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("files").action(ArgAction::Append))
+                .arg(Arg::new("other"))
+                .try_get_matches_from(&argv(&["t", "a"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn required_append_positional_needs_one_value() {
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("files").action(ArgAction::Append).required(true))
+                .try_get_matches_from(&argv(&["t"]))
+                .is_err()
+        );
+        let matches = Xarp::new("t")
+            .arg(Arg::new("files").action(ArgAction::Append).required(true))
+            .try_get_matches_from(&argv(&["t", "only"]))
+            .unwrap();
+        assert_eq!(
+            matches.get_many::<String>("files"),
+            Some(vec!["only".to_string()])
+        );
+    }
+
+    #[test]
+    fn flags_default_to_absent() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("v").long("verbose").action(ArgAction::SetTrue))
+            .try_get_matches_from(&argv(&["t"]))
+            .unwrap();
+        assert!(!matches.get_flag("v"));
+    }
+
+    #[test]
+    fn flag_set_via_long_and_short() {
+        for token in ["--verbose", "-v"] {
+            let matches = Xarp::new("t")
+                .arg(
+                    Arg::new("v")
+                        .short('v')
+                        .long("verbose")
+                        .action(ArgAction::SetTrue),
+                )
+                .try_get_matches_from(&argv(&["t", token]))
+                .unwrap();
+            assert!(matches.get_flag("v"), "token {token} should set the flag");
+        }
+    }
+
+    #[test]
+    fn falsy_flag_defaults_leave_the_flag_unset() {
+        for default in ["false", "0", "no"] {
+            let matches = Xarp::new("t")
+                .arg(
+                    Arg::new("f")
+                        .long("flag")
+                        .action(ArgAction::SetTrue)
+                        .default_value(default),
+                )
+                .try_get_matches_with_env(&argv(&["t"]), &empty_env())
+                .unwrap();
+            assert!(!matches.get_flag("f"), "default {default} should not set");
+        }
+    }
+
+    #[test]
+    fn truthy_matching_is_case_insensitive() {
+        for value in ["TRUE", "True", "tRuE"] {
+            let env_map = HashMap::from([("K".to_string(), value.to_string())]);
+            let matches = Xarp::new("t")
+                .arg(
+                    Arg::new("f")
+                        .long("flag")
+                        .action(ArgAction::SetTrue)
+                        .env("K"),
+                )
+                .try_get_matches_with_env(&argv(&["t"]), &env_map)
+                .unwrap();
+            assert!(matches.get_flag("f"), "env {value} should set the flag");
+        }
+    }
+
+    #[test]
+    fn cli_value_beats_default() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt").default_value("dflt"))
+            .try_get_matches_from(&argv(&["t", "--opt", "cli"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some("cli".to_string()));
+    }
+
+    #[test]
+    fn cli_value_beats_env_value() {
+        let env_map = HashMap::from([("K".to_string(), "env".to_string())]);
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt").env("K"))
+            .try_get_matches_with_env(&argv(&["t", "--opt", "cli"]), &env_map)
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some("cli".to_string()));
+    }
+
+    #[test]
+    fn env_value_beats_default() {
+        let env_map = HashMap::from([("K".to_string(), "env".to_string())]);
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt").env("K").default_value("dflt"))
+            .try_get_matches_with_env(&argv(&["t"]), &env_map)
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some("env".to_string()));
+    }
+
+    #[test]
+    fn required_option_errors_and_env_satisfies() {
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("c").long("cfg").required(true))
+                .try_get_matches_with_env(&argv(&["t"]), &empty_env())
+                .is_err()
+        );
+        let env_map = HashMap::from([("K".to_string(), "v".to_string())]);
+        let matches = Xarp::new("t")
+            .arg(Arg::new("c").long("cfg").required(true).env("K"))
+            .try_get_matches_with_env(&argv(&["t"]), &env_map)
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("c"), Some("v".to_string()));
+    }
+
+    #[test]
+    fn required_option_satisfied_by_default() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("c").long("cfg").required(true).default_value("d"))
+            .try_get_matches_from(&argv(&["t"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("c"), Some("d".to_string()));
+    }
+
+    #[test]
+    fn cli_append_replaces_default_and_env() {
+        let env_map = HashMap::from([("K".to_string(), "env".to_string())]);
+        let matches = Xarp::new("t")
+            .arg(
+                Arg::new("h")
+                    .long("header")
+                    .action(ArgAction::Append)
+                    .env("K")
+                    .default_value("dflt"),
+            )
+            .try_get_matches_with_env(&argv(&["t", "--header", "cli"]), &env_map)
+            .unwrap();
+        assert_eq!(
+            matches.get_many::<String>("h"),
+            Some(vec!["cli".to_string()])
+        );
+    }
+
+    #[test]
+    fn empty_env_string_is_a_value_for_options() {
+        let env_map = HashMap::from([("K".to_string(), String::new())]);
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt").env("K"))
+            .try_get_matches_with_env(&argv(&["t"]), &env_map)
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some(String::new()));
+    }
+
+    #[test]
+    fn conflicting_pair_errors_in_both_orders() {
+        let app = || {
+            Xarp::new("t")
+                .arg(Arg::new("a").long("aaa").conflicts_with("b"))
+                .arg(Arg::new("b").long("bbb"))
+        };
+        assert!(
+            app()
+                .try_get_matches_from(&argv(&["t", "--aaa", "1", "--bbb", "2"]))
+                .is_err()
+        );
+        assert!(
+            app()
+                .try_get_matches_from(&argv(&["t", "--bbb", "2", "--aaa", "1"]))
+                .is_err()
+        );
+        assert!(
+            app()
+                .try_get_matches_from(&argv(&["t", "--aaa", "1"]))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn env_selections_participate_in_conflicts() {
+        let env_map = HashMap::from([("KB".to_string(), "2".to_string())]);
+        let result = Xarp::new("t")
+            .arg(Arg::new("a").long("aaa").conflicts_with("b"))
+            .arg(Arg::new("b").long("bbb").env("KB"))
+            .try_get_matches_with_env(&argv(&["t", "--aaa", "1"]), &env_map);
+        assert!(matches!(result, Err(XarpError::Parse(_))));
+    }
+
+    #[test]
+    fn basic_subcommand_routing_with_flag() {
+        let matches = Xarp::new("t")
+            .subcommand(
+                Xarp::new("run").arg(Arg::new("fast").long("fast").action(ArgAction::SetTrue)),
+            )
+            .try_get_matches_from(&argv(&["t", "run", "--fast"]))
+            .unwrap();
+        let (name, sub) = matches.subcommand().unwrap();
+        assert_eq!(name, "run");
+        assert!(sub.get_flag("fast"));
+    }
+
+    #[test]
+    fn subcommand_required_args_are_enforced() {
+        assert!(
+            Xarp::new("t")
+                .subcommand(Xarp::new("run").arg(Arg::new("target").required(true)))
+                .try_get_matches_from(&argv(&["t", "run"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn unknown_bare_token_without_subcommands_errors() {
+        assert!(
+            Xarp::new("t")
+                .try_get_matches_from(&argv(&["t", "nope"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn parent_option_before_subcommand_is_kept() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("v").long("verbose").action(ArgAction::SetTrue))
+            .subcommand(Xarp::new("run"))
+            .try_get_matches_from(&argv(&["t", "--verbose", "run"]))
+            .unwrap();
+        assert!(matches.get_flag("v"));
+        assert_eq!(matches.subcommand().unwrap().0, "run");
+    }
+
+    #[test]
+    fn subcommand_help_returns_help() {
+        let result = Xarp::new("t")
+            .subcommand(Xarp::new("run"))
+            .try_get_matches_from(&argv(&["t", "run", "--help"]));
+        assert!(matches!(result, Err(XarpError::Help(_))));
+    }
+
+    #[test]
+    fn nested_subcommands_route_recursively() {
+        let matches = Xarp::new("t")
+            .subcommand(Xarp::new("outer").subcommand(
+                Xarp::new("inner").arg(Arg::new("x").long("x").action(ArgAction::SetTrue)),
+            ))
+            .try_get_matches_from(&argv(&["t", "outer", "inner", "--x"]))
+            .unwrap();
+        let (outer, outer_matches) = matches.subcommand().unwrap();
+        assert_eq!(outer, "outer");
+        let (inner, inner_matches) = outer_matches.subcommand().unwrap();
+        assert_eq!(inner, "inner");
+        assert!(inner_matches.get_flag("x"));
+    }
+
+    #[test]
+    fn delimiter_before_subcommand_name_errors_without_positionals() {
+        assert!(
+            Xarp::new("t")
+                .subcommand(Xarp::new("run"))
+                .try_get_matches_from(&argv(&["t", "--", "run"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn exact_help_and_version_tokens() {
+        assert!(
+            Xarp::new("t")
+                .try_get_matches_from(&argv(&["t", "-h"]))
+                .unwrap_err()
+                .is_help()
+        );
+        assert!(
+            Xarp::new("t")
+                .try_get_matches_from(&argv(&["t", "--help"]))
+                .unwrap_err()
+                .is_help()
+        );
+        assert!(
+            Xarp::new("t")
+                .version("9.9")
+                .try_get_matches_from(&argv(&["t", "-V"]))
+                .unwrap_err()
+                .is_version()
+        );
+    }
+
+    #[test]
+    fn help_payload_contains_app_name() {
+        let error = Xarp::new("demo")
+            .try_get_matches_from(&argv(&["demo", "--help"]))
+            .unwrap_err();
+        assert!(error.to_string().contains("demo"));
+    }
+
+    #[test]
+    fn version_payload_contains_name_and_version() {
+        let error = Xarp::new("demo")
+            .version("3.2.1")
+            .try_get_matches_from(&argv(&["demo", "--version"]))
+            .unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("demo"));
+        assert!(text.contains("3.2.1"));
+    }
+
+    #[test]
+    fn render_version_unknown_fallback() {
+        assert!(Xarp::new("demo").render_version().contains("unknown"));
+    }
+
+    #[test]
+    fn help_lists_sections_and_builtin_flags() {
+        let help = Xarp::new("demo")
+            .version("1.0")
+            .about("d")
+            .arg(Arg::new("input").required(true))
+            .subcommand(Xarp::new("run").about("run it"))
+            .render_help();
+        for token in [
+            "Commands",
+            "Arguments",
+            "Flags & Options",
+            "-h, --help",
+            "-V, --version",
+        ] {
+            assert!(help.contains(token), "help is missing {token}");
+        }
+    }
+
+    #[test]
+    fn custom_long_help_override_is_not_hijacked() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("myhelp").long("help").action(ArgAction::SetTrue))
+            .try_get_matches_from(&argv(&["t", "--help"]))
+            .unwrap();
+        assert!(matches.get_flag("myhelp"));
+    }
+
+    #[test]
+    fn custom_version_short_override_is_ordinary() {
+        let matches = Xarp::new("t")
+            .version("1.0")
+            .arg(Arg::new("mine").short('V').action(ArgAction::SetTrue))
+            .try_get_matches_from(&argv(&["t", "-V"]))
+            .unwrap();
+        assert!(matches.get_flag("mine"));
+    }
+
+    #[test]
+    fn error_display_and_from_string() {
+        let parse = XarpError::from("boom".to_string());
+        assert!(parse.is_parse());
+        assert_eq!(parse.to_string(), "boom");
+        assert_eq!(XarpError::Help("h".to_string()).to_string(), "h");
+        assert_eq!(XarpError::Version("v".to_string()).to_string(), "v");
+    }
+
+    #[test]
+    fn from_arg_value_across_types() {
+        use crate::FromArgValue;
+        assert_eq!(u16::from_arg_value("8080"), Some(8080));
+        assert_eq!(u16::from_arg_value("abc"), None);
+        assert_eq!(i32::from_arg_value("-5"), Some(-5));
+        assert_eq!(bool::from_arg_value("true"), Some(true));
+        assert_eq!(bool::from_arg_value("yes"), None);
+        assert_eq!(String::from_arg_value("hi"), Some("hi".to_string()));
+    }
+
+    #[test]
+    fn getters_return_none_when_absent() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt"))
+            .try_get_matches_from(&argv(&["t"]))
+            .unwrap();
+        assert!(!matches.get_flag("missing"));
+        assert!(matches.get_one::<String>("o").is_none());
+        assert!(matches.get_many::<String>("o").is_none());
+        assert!(matches.subcommand().is_none());
+    }
+
+    #[test]
+    fn arg_builder_defaults() {
+        let arg = Arg::new("x");
+        assert!(arg.is_positional());
+        assert!(!arg.required);
+        assert_eq!(arg.action, ArgAction::Set);
+        assert!(arg.short.is_none());
+        assert!(arg.long.is_none());
+        let flagged = Arg::new("y").short('y').long("why");
+        assert!(!flagged.is_positional());
+    }
+
+    #[test]
+    fn empty_argv_applies_defaults() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt").default_value("d"))
+            .try_get_matches_from(&[])
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some("d".to_string()));
+    }
+
+    #[test]
+    fn bare_delimiter_with_no_positionals_is_ok() {
+        assert!(
+            Xarp::new("t")
+                .try_get_matches_from(&argv(&["t", "--"]))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn append_positional_collects_after_delimiter() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("files").action(ArgAction::Append))
+            .try_get_matches_from(&argv(&["t", "--", "-a", "--help"]))
+            .unwrap();
+        assert_eq!(
+            matches.get_many::<String>("files"),
+            Some(vec!["-a".to_string(), "--help".to_string()])
+        );
+    }
+
+    #[test]
+    fn possible_values_checked_per_append_item() {
+        assert!(
+            Xarp::new("t")
+                .arg(
+                    Arg::new("m")
+                        .long("mode")
+                        .action(ArgAction::Append)
+                        .possible_values(["a", "b"])
+                )
+                .try_get_matches_from(&argv(&["t", "--mode", "a", "--mode", "z"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn single_sided_conflict_allows_the_other_side() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("a").long("aaa").conflicts_with("b"))
+            .arg(Arg::new("b").long("bbb"))
+            .try_get_matches_from(&argv(&["t", "--bbb", "2"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("b"), Some("2".to_string()));
+    }
 }

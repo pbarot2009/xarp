@@ -236,4 +236,92 @@ mod tests {
             Effects::from_bits_truncate(Effects::ALL.0)
         );
     }
+
+    #[test]
+    fn every_flag_has_a_distinct_bit() {
+        let flags = [
+            Effects::BOLD,
+            Effects::DIM,
+            Effects::ITALIC,
+            Effects::UNDERLINE,
+            Effects::BLINK,
+            Effects::RAPID_BLINK,
+            Effects::INVERT,
+            Effects::HIDDEN,
+            Effects::STRIKETHROUGH,
+            Effects::DOUBLE_UNDERLINE,
+        ];
+        assert_eq!(flags.len(), 10);
+        for (i, first) in flags.iter().enumerate() {
+            assert_ne!(first.0, 0);
+            for second in &flags[i + 1..] {
+                assert_eq!(first.0 & second.0, 0);
+            }
+            assert!(Effects::ALL.contains(*first));
+        }
+    }
+
+    #[test]
+    fn empty_and_contains() {
+        assert!(Effects::NONE.is_empty());
+        assert!(Effects::empty().is_empty());
+        assert!(!Effects::BOLD.is_empty());
+        assert!((Effects::BOLD | Effects::DIM).contains(Effects::BOLD));
+        assert!(!Effects::BOLD.contains(Effects::DIM));
+    }
+
+    #[test]
+    fn insert_and_remove() {
+        let added = Effects::NONE.insert(Effects::BOLD).insert(Effects::DIM);
+        assert!(added.contains(Effects::BOLD));
+        let removed = added.remove(Effects::BOLD);
+        assert!(!removed.contains(Effects::BOLD));
+        assert!(removed.contains(Effects::DIM));
+    }
+
+    #[test]
+    fn bitwise_operators() {
+        assert_eq!((Effects::BOLD | Effects::DIM).0, 0b11);
+        assert_eq!((Effects::BOLD & Effects::DIM).0, 0);
+        assert_eq!((Effects::BOLD & (Effects::BOLD | Effects::DIM)).0, 1);
+        let mut assigned = Effects::BOLD;
+        assigned |= Effects::DIM;
+        assert!(assigned.contains(Effects::DIM));
+        assigned &= Effects::BOLD;
+        assert!(!assigned.contains(Effects::DIM));
+        assert!(!(!Effects::NONE).is_empty());
+    }
+
+    #[test]
+    fn debug_names_every_flag() {
+        let cases = [
+            (Effects::DIM, "DIM"),
+            (Effects::ITALIC, "ITALIC"),
+            (Effects::UNDERLINE, "UNDERLINE"),
+            (Effects::BLINK, "BLINK"),
+            (Effects::RAPID_BLINK, "RAPID_BLINK"),
+            (Effects::INVERT, "INVERT"),
+            (Effects::HIDDEN, "HIDDEN"),
+            (Effects::STRIKETHROUGH, "STRIKETHROUGH"),
+            (Effects::DOUBLE_UNDERLINE, "DOUBLE_UNDERLINE"),
+        ];
+        for (flag, name) in cases {
+            assert_eq!(format!("{flag:?}"), format!("Effects({name})"));
+        }
+    }
+
+    #[test]
+    fn debug_reports_unknown_bits_as_hex() {
+        let unknown = Effects::from_bits_truncate(0) | Effects::BOLD;
+        let raw = Effects(unknown.0 | 0x8000);
+        assert_eq!(format!("{raw:?}"), "Effects(BOLD | 0x8000)");
+    }
+
+    #[test]
+    fn from_bits_boundary() {
+        assert_eq!(Effects::from_bits(Effects::ALL.0), Some(Effects::ALL));
+        assert_eq!(Effects::from_bits(Effects::ALL.0 + 1), None);
+        assert_eq!(Effects::from_bits(0), Some(Effects::NONE));
+        assert_eq!(Effects::from_bits_truncate(0xFFFF).0, Effects::ALL.0);
+    }
 }

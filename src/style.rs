@@ -485,4 +485,216 @@ mod tests {
         assert_eq!(from_color.fg, Some(Color::Red));
         assert!(from_color.effects.contains(Effects::BOLD));
     }
+
+    #[test]
+    fn builders_set_each_effect() {
+        assert!(Style::new().bold().effects.contains(Effects::BOLD));
+        assert!(Style::new().dim().effects.contains(Effects::DIM));
+        assert!(Style::new().italic().effects.contains(Effects::ITALIC));
+        assert!(
+            Style::new()
+                .underline()
+                .effects
+                .contains(Effects::UNDERLINE)
+        );
+        assert!(Style::new().blink().effects.contains(Effects::BLINK));
+        assert!(Style::new().invert().effects.contains(Effects::INVERT));
+        assert!(Style::new().hidden().effects.contains(Effects::HIDDEN));
+        assert!(
+            Style::new()
+                .strikethrough()
+                .effects
+                .contains(Effects::STRIKETHROUGH)
+        );
+        assert!(
+            Style::new()
+                .double_underline()
+                .effects
+                .contains(Effects::DOUBLE_UNDERLINE)
+        );
+    }
+
+    #[test]
+    fn fg_bg_and_effects_union() {
+        let style = Style::new()
+            .fg(Color::Red)
+            .bg(Color::Blue)
+            .effects(Effects::BOLD | Effects::ITALIC);
+        assert_eq!(style.fg, Some(Color::Red));
+        assert_eq!(style.bg, Some(Color::Blue));
+        assert!(style.effects.contains(Effects::BOLD));
+        assert!(style.effects.contains(Effects::ITALIC));
+        assert!(!style.is_plain());
+        assert!(Style::new().is_plain());
+    }
+
+    #[test]
+    fn display_bold_dim_italic_codes() {
+        assert_eq!(Style::new().bold().to_string(), "\x1b[1m");
+        assert_eq!(Style::new().dim().to_string(), "\x1b[2m");
+        assert_eq!(Style::new().italic().to_string(), "\x1b[3m");
+    }
+
+    #[test]
+    fn display_underline_blink_rapid_codes() {
+        assert_eq!(Style::new().underline().to_string(), "\x1b[4m");
+        assert_eq!(Style::new().blink().to_string(), "\x1b[5m");
+        assert_eq!(
+            Style::new().effects(Effects::RAPID_BLINK).to_string(),
+            "\x1b[6m"
+        );
+    }
+
+    #[test]
+    fn display_invert_hidden_strike_double_codes() {
+        assert_eq!(Style::new().invert().to_string(), "\x1b[7m");
+        assert_eq!(Style::new().hidden().to_string(), "\x1b[8m");
+        assert_eq!(Style::new().strikethrough().to_string(), "\x1b[9m");
+        assert_eq!(Style::new().double_underline().to_string(), "\x1b[21m");
+    }
+
+    #[test]
+    fn display_standard_foreground_codes() {
+        let cases = [
+            (Color::Black, "30"),
+            (Color::Red, "31"),
+            (Color::Green, "32"),
+            (Color::Yellow, "33"),
+            (Color::Blue, "34"),
+            (Color::Magenta, "35"),
+            (Color::Cyan, "36"),
+            (Color::White, "37"),
+        ];
+        for (color, code) in cases {
+            assert_eq!(Style::new().fg(color).to_string(), format!("\x1b[{code}m"));
+        }
+    }
+
+    #[test]
+    fn display_bright_foreground_codes() {
+        let cases = [
+            (Color::BrightBlack, "90"),
+            (Color::BrightRed, "91"),
+            (Color::BrightGreen, "92"),
+            (Color::BrightYellow, "93"),
+            (Color::BrightBlue, "94"),
+            (Color::BrightMagenta, "95"),
+            (Color::BrightCyan, "96"),
+            (Color::BrightWhite, "97"),
+        ];
+        for (color, code) in cases {
+            assert_eq!(Style::new().fg(color).to_string(), format!("\x1b[{code}m"));
+        }
+    }
+
+    #[test]
+    fn display_extended_palette_codes() {
+        let cases = [
+            (Color::Orange, "208"),
+            (Color::Purple, "129"),
+            (Color::Pink, "205"),
+            (Color::Teal, "30"),
+            (Color::Gold, "220"),
+            (Color::Silver, "248"),
+            (Color::Lime, "118"),
+            (Color::Indigo, "54"),
+        ];
+        for (color, code) in cases {
+            assert_eq!(
+                Style::new().fg(color).to_string(),
+                format!("\x1b[38;5;{code}m")
+            );
+        }
+    }
+
+    #[test]
+    fn display_ansi256_and_rgb_codes() {
+        assert_eq!(
+            Style::new().fg(Color::Ansi256(141)).to_string(),
+            "\x1b[38;5;141m"
+        );
+        assert_eq!(
+            Style::new().fg(Color::Rgb(255, 110, 64)).to_string(),
+            "\x1b[38;2;255;110;64m"
+        );
+    }
+
+    #[test]
+    fn display_background_codes() {
+        assert_eq!(Style::new().bg(Color::Red).to_string(), "\x1b[41m");
+        assert_eq!(Style::new().bg(Color::BrightCyan).to_string(), "\x1b[106m");
+        assert_eq!(
+            Style::new().bg(Color::Ansi256(7)).to_string(),
+            "\x1b[48;5;7m"
+        );
+        assert_eq!(
+            Style::new().bg(Color::Rgb(1, 2, 3)).to_string(),
+            "\x1b[48;2;1;2;3m"
+        );
+    }
+
+    #[test]
+    fn display_combines_effects_and_colors() {
+        assert_eq!(Style::new().bold().fg(Color::Red).to_string(), "\x1b[1;31m");
+        assert_eq!(
+            Style::new().fg(Color::Green).bg(Color::Black).to_string(),
+            "\x1b[32;40m"
+        );
+    }
+
+    #[test]
+    fn alternate_format_renders_reset() {
+        assert_eq!(format!("{:#}", Style::new().bold()), "\x1b[0m");
+    }
+
+    #[test]
+    fn plain_style_displays_empty_and_paints_through() {
+        assert_eq!(Style::new().to_string(), String::new());
+        assert_eq!(Style::new().paint("text").to_string(), "text");
+    }
+
+    #[test]
+    fn painted_output_wraps_with_reset() {
+        let out = Style::new().bold().paint("hi").to_string();
+        assert!(out.starts_with("\x1b[1m"));
+        assert!(out.ends_with("\x1b[0m"));
+        assert!(out.contains("hi"));
+    }
+
+    #[test]
+    fn preset_constants_carry_codes() {
+        assert!(crate::color::RED.to_string().contains("\x1b[31m"));
+        assert!(crate::color::GREEN.paint("ok").to_string().contains("ok"));
+        assert!(crate::color::BOLD.to_string().contains("\x1b[1m"));
+    }
+
+    #[test]
+    fn plain_theme_has_no_styled_slots() {
+        let plain = Styles::plain();
+        for slot in [
+            plain.header,
+            plain.usage,
+            plain.literal,
+            plain.placeholder,
+            plain.error,
+            plain.valid,
+            plain.invalid,
+            plain.warning,
+            plain.muted,
+        ] {
+            assert!(slot.is_plain());
+        }
+    }
+
+    #[test]
+    fn theme_setters_replace_slots() {
+        let custom = Styles::plain()
+            .header(Style::new().bold())
+            .literal(Style::new().fg(Color::Red))
+            .muted(Style::new().dim());
+        assert!(custom.header.effects.contains(Effects::BOLD));
+        assert_eq!(custom.literal.fg, Some(Color::Red));
+        assert!(custom.muted.effects.contains(Effects::DIM));
+        assert!(custom.usage.is_plain());
+    }
 }
