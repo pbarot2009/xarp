@@ -1129,7 +1129,7 @@ impl Xarp {
                 let about = cmd.about.unwrap_or("");
                 // Pad plain text before painting so ANSI codes don't break alignment.
                 let name_padded = format!("{: <16}", cmd.name);
-                let _ = writeln!(out, "  {}  {about}", cmd_item.paint(&name_padded),);
+                let _ = writeln!(out, "  {}  {about}", cmd_item.paint(&name_padded));
             }
             let _ = writeln!(out);
         }
