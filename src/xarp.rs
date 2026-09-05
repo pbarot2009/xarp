@@ -64,6 +64,9 @@ pub enum ArgAction {
     /// Option or positional argument that captures a single value.
     Set,
     /// Option that can be supplied multiple times to collect values into a list.
+    ///
+    /// Also allowed on the last positional argument to collect the remaining
+    /// positional values.
     Append,
 }
 

@@ -79,6 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing value instead of being swallowed as the value.
 - Documented the `NO_COLOR` rule (any presence, including empty, disables
   color) and the double-underline (SGR 21) terminal caveat.
-- Added 26 unit tests plus doc tests covering conflicts, defaults, env
-  precedence, duplicates, positionals, subcommands, help/version routing,
-  themes, styles, and effects.
+- Added 113 unit tests plus doc tests covering conflicts, defaults, env
+  precedence, duplicates, definitions, positionals, subcommands, help/version
+  routing, themes, styles, and effects.
