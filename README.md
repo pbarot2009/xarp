@@ -57,7 +57,9 @@ fn main() {
 
  * Flags: Set `action(ArgAction::SetTrue)`. Checks via `matches.get_flag("id")`.
  * Options: Default action (`ArgAction::Set`). Value passed via `--opt value` or `--opt=value`.
+   Repeated use keeps the last value; a following `--` is never consumed as a value.
  * Positional Arguments: Omit both `.short()` and `.long()`. Evaluated in declaration order.
+   Only the last positional may use `ArgAction::Append` to collect multiple values.
  * Multiple Values: Use `action(ArgAction::Append)` and retrieve via `matches.get_many::<T>("id")`.
 
 ```rust
@@ -76,6 +78,71 @@ if let Some(tags) = matches.get_many::<String>("tag") {
     }
 }
 ```
+
+## Validation & Fallbacks
+
+```rust
+use xarp::{Arg, Xarp};
+
+let matches = Xarp::new("app")
+    .arg(
+        Arg::new("mode")
+            .long("mode")
+            .value_name("MODE")
+            .possible_values(["fast", "safe"])
+            .default_value("fast"),
+    )
+    .arg(
+        Arg::new("port")
+            .long("port")
+            .value_name("PORT")
+            .env("APP_PORT"), // used when `--port` is not passed
+    )
+    .arg(
+        Arg::new("json")
+            .long("json")
+            .conflicts_with("mode"), // error when combined with `--mode`
+    )
+    .get_matches();
+```
+
+Conflict checks consider explicitly passed arguments (CLI or environment),
+never `default_value`s. A required positional must not follow an optional one.
+
+## Typed Values & Errors
+
+`get_one` returns `None` for both missing and unparsable values. Use
+`try_get_one` / `try_get_many` to tell them apart:
+
+```rust
+let port: u16 = matches.try_get_one("port").unwrap().unwrap_or(8080);
+```
+
+Parse failures from `try_get_*` carry the same `--help` guidance as other
+parse errors.
+
+## Parsing Without Exiting
+
+`get_matches()` prints help/version and exits the process. Library code
+should use a `try_` variant and handle `XarpError` itself:
+
+```rust
+use xarp::{Arg, Xarp, XarpError};
+
+let result = Xarp::new("app")
+    .arg(Arg::new("verbose").short('v').long("verbose"))
+    .try_get_matches();
+
+match result {
+    Ok(matches) => println!("verbose: {}", matches.get_flag("verbose")),
+    Err(err) if err.is_help() || err.is_version() => print!("{err}"),
+    Err(err) => eprintln!("{err}"),
+}
+```
+
+`try_get_matches_with_env(&args, &env_map)` parses with an explicit
+environment map instead of the process environment, which keeps tests
+deterministic. Tokens after `--` are always positionals.
 
 ## Subcommands
 
@@ -129,6 +196,10 @@ let ansi_style = Style::new().fg(Color::Ansi256(208));
 let alert = Color::BrightRed | Effects::BOLD | Effects::UNDERLINE;
 println!("{}", alert.paint("Fatal Error"));
 ```
+
+Styles compose with `|` as well (`Style | Style` merges, right-hand colors
+win). Help output follows the configured `Styles` theme; setting the
+`NO_COLOR` environment variable (any value, including empty) disables colors.
 
 ## License
 Dual-licensed under either of:

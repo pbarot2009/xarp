@@ -124,9 +124,22 @@ impl Style {
 
     /// Wraps any `Display` value in a struct that automatically applies this style
     /// and resets formatting afterwards.
+    ///
+    /// Takes `self` by value (`Style` is `Copy`), so temporaries can be
+    /// painted directly: `Style::new().bold().paint("hi")`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use xarp::style::Style;
+    /// use xarp::color::Color;
+    ///
+    /// let styled = Style::new().bold().fg(Color::Red).paint("alert");
+    /// assert!(styled.to_string().contains("alert"));
+    /// ```
     #[must_use]
     #[inline]
-    pub fn paint<'a, T: Display + ?Sized>(&'a self, target: &'a T) -> Styled<'a, T> {
+    pub fn paint<T: Display + ?Sized>(self, target: &T) -> Styled<'_, T> {
         Styled {
             style: self,
             target,
@@ -164,6 +177,52 @@ impl BitOr<Color> for Effects {
     #[inline]
     fn bitor(self, rhs: Color) -> Style {
         Style::new().fg(rhs).effects(self)
+    }
+}
+
+/// Merges two styles: the right-hand side `fg`/`bg` win when set, and effects
+/// are combined with a union.
+///
+/// # Example
+///
+/// ```rust
+/// use xarp::style::Style;
+/// use xarp::color::Color;
+/// use xarp::effect::Effects;
+///
+/// let merged = Style::new().fg(Color::Red) | Style::new().bold();
+/// assert_eq!(merged.fg, Some(Color::Red));
+/// assert!(merged.effects.contains(Effects::BOLD));
+/// ```
+impl BitOr<Style> for Style {
+    type Output = Self;
+    #[inline]
+    fn bitor(self, rhs: Self) -> Self {
+        Self {
+            fg: rhs.fg.or(self.fg),
+            bg: rhs.bg.or(self.bg),
+            effects: self.effects | rhs.effects,
+        }
+    }
+}
+
+/// Combines effects with a style: effects are unioned, the style's
+/// foreground and background colors are kept.
+impl BitOr<Style> for Effects {
+    type Output = Style;
+    #[inline]
+    fn bitor(self, rhs: Style) -> Style {
+        Style::new().effects(self) | rhs
+    }
+}
+
+/// Combines a color with a style: the style's foreground wins when set,
+/// otherwise the color becomes the foreground; backgrounds and effects merge.
+impl BitOr<Style> for Color {
+    type Output = Style;
+    #[inline]
+    fn bitor(self, rhs: Style) -> Style {
+        Style::new().fg(self) | rhs
     }
 }
 
@@ -242,8 +301,11 @@ impl Display for Style {
 }
 
 /// Helper struct returned by `Style::paint`.
+///
+/// Owns a copy of the style (`Style` is `Copy`), so painted values from
+/// temporaries can be bound to variables.
 pub struct Styled<'a, T: ?Sized> {
-    style: &'a Style,
+    style: Style,
     target: &'a T,
 }
 
@@ -300,7 +362,10 @@ impl Styles {
     }
 
     /// Default styled CLI theme (Cargo / Clap v4 styled look).
-    /// Automatically returns plain styles if the `NO_COLOR` environment variable is set.
+    ///
+    /// Automatically returns plain styles when the `NO_COLOR` environment
+    /// variable is present, including when it is set to an empty string
+    /// (any presence disables color, per <https://no-color.org>).
     #[must_use]
     pub fn styled() -> Self {
         if std::env::var_os("NO_COLOR").is_some() {
@@ -387,5 +452,37 @@ impl Styles {
 impl Default for Styles {
     fn default() -> Self {
         Self::styled()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paint_temporary_can_be_bound() {
+        let painted = Style::new().bold().paint("hi");
+        assert!(painted.to_string().contains("hi"));
+    }
+
+    #[test]
+    fn style_merge_prefers_right_colors_and_unions_effects() {
+        let merged = Style::new().fg(Color::Red) | Style::new().bold();
+        assert_eq!(merged.fg, Some(Color::Red));
+        assert!(merged.effects.contains(Effects::BOLD));
+
+        let overridden = Style::new().fg(Color::Red) | Style::new().fg(Color::Blue);
+        assert_eq!(overridden.fg, Some(Color::Blue));
+    }
+
+    #[test]
+    fn effects_and_colors_merge_with_styles() {
+        let from_effects = Effects::BOLD | Style::new().fg(Color::Red);
+        assert_eq!(from_effects.fg, Some(Color::Red));
+        assert!(from_effects.effects.contains(Effects::BOLD));
+
+        let from_color = Color::Red | Style::new().bold();
+        assert_eq!(from_color.fg, Some(Color::Red));
+        assert!(from_color.effects.contains(Effects::BOLD));
     }
 }

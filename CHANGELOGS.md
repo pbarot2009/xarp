@@ -32,6 +32,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records presence as a flag. Non-last `Append` positionals are rejected.
 - Short attached values now strip a leading `=`, so `-p=8080` behaves like
   `--port=8080`.
+- `--version` / `-V` without a configured `version()` now report an unexpected
+  argument instead of rendering `unknown`. Bundled shorts trigger the
+  built-ins (`-vh` shows help, `-vV` shows the version).
+- `--flag=value` on a `SetTrue` flag is now rejected instead of silently
+  ignoring the value.
+- User-defined `help` / `version` arguments (colliding `id` / `short` /
+  `long`) are no longer hijacked: `-h` / `--help` behave as ordinary
+  arguments when the built-ins are not injected.
+- `render_help` now honors `self.styles` (a plain theme yields no ANSI
+  escapes), falls back to `unknown` for a missing version like
+  `render_version`, aligns columns on visible width, and lists `required`,
+  default, possible-values, `env`, and conflict metadata for options and
+  positionals.
 - Subcommand versus positional ambiguity documented: subcommands take
   precedence on the first bare token, while `--` forces positional parsing
   (for example `prog -- build` treats `build` as a positional value).
@@ -42,3 +55,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that distinguish missing arguments (`Ok(None)`) from parse failures
   (`Err(XarpError::Parse)`). Existing `get_one` / `get_many` behavior is
   unchanged and documented as returning `None` in both cases.
+- `Xarp::try_get_matches`: parses `std::env::args()` without exiting, as a
+  non-terminating alternative to `get_matches` for library code.
+- `Xarp::try_get_matches_with_env`: deterministic parsing with an explicit
+  environment map instead of the process environment (test-friendly).
+- `XarpError::is_help`, `is_version`, and `is_parse` helpers for branching
+  without an exhaustive match.
+- `Effects::ALL`, `Effects::all()`, `Effects::from_bits()`, and
+  `Effects::from_bits_truncate()`; `Debug` now lists set flag names.
+- `BitOr<Style>` implementations for `Style`, `Effects`, and `Color` so
+  styles compose with `|` (right-hand colors win, effects union).
+- Definition validation now rejects unknown `conflicts_with` targets, empty
+  ids, reserved short flags (`-`, `=`, whitespace), malformed longs, invalid
+  subcommand names, and required positionals following optional ones.
+
+### Changed
+
+- `Style::paint` takes `self` by value and `Styled` owns the style, so
+  temporaries like `Style::new().bold().paint("hi")` can be bound.
+- `try_get_one` / `try_get_many` failures carry the same `--help` guidance
+  as other parse errors.
+- A `--` delimiter following an option that expects a value now reports a
+  missing value instead of being swallowed as the value.
+- Documented the `NO_COLOR` rule (any presence, including empty, disables
+  color) and the double-underline (SGR 21) terminal caveat.
+- Added 26 unit tests plus doc tests covering conflicts, defaults, env
+  precedence, duplicates, positionals, subcommands, help/version routing,
+  themes, styles, and effects.

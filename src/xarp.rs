@@ -26,6 +26,28 @@ impl Display for XarpError {
     }
 }
 
+impl XarpError {
+    /// Returns `true` when the user requested help output.
+    ///
+    /// The payload already contains the rendered help text.
+    #[must_use]
+    pub fn is_help(&self) -> bool {
+        matches!(self, Self::Help(_))
+    }
+
+    /// Returns `true` when the user requested version output.
+    #[must_use]
+    pub fn is_version(&self) -> bool {
+        matches!(self, Self::Version(_))
+    }
+
+    /// Returns `true` for argument syntax or validation failures.
+    #[must_use]
+    pub fn is_parse(&self) -> bool {
+        matches!(self, Self::Parse(_))
+    }
+}
+
 impl Error for XarpError {}
 
 impl From<String> for XarpError {
@@ -198,7 +220,8 @@ impl ArgMatches {
 
     /// Gets all values supplied for an argument, parsed into `Vec<T>`.
     ///
-    /// Values that fail to parse are silently skipped.
+    /// Values that fail to parse are silently skipped, so a present argument
+    /// whose values all fail to parse yields `Some(vec![])`.
     /// Use [`ArgMatches::try_get_many`] to surface parse failures as errors.
     #[must_use]
     pub fn get_many<T: FromArgValue>(&self, id: &str) -> Option<Vec<T>> {
@@ -206,6 +229,11 @@ impl ArgMatches {
             .get(id)
             .map(|vals| vals.iter().filter_map(|v| T::from_arg_value(v)).collect())
     }
+
+    /// Hint appended to [`ArgMatches::try_get_one`] and
+    /// [`ArgMatches::try_get_many`] failures so they match the
+    /// `--help` guidance of other parse errors.
+    const TRY_HELP_HINT: &'static str = "\n\nFor more information, try '--help'.";
 
     /// Gets the first or single value for an argument, distinguishing
     /// missing arguments from parse failures.
@@ -217,13 +245,15 @@ impl ArgMatches {
     /// # Errors
     ///
     /// Returns [`XarpError::Parse`] if a supplied value cannot be parsed into `T`.
+    /// The message carries the same `--help` guidance as other parse errors.
     pub fn try_get_one<T: FromArgValue>(&self, id: &str) -> Result<Option<T>, XarpError> {
         match self.values.get(id).and_then(|vals| vals.first()) {
             None => Ok(None),
             Some(raw) => match T::from_arg_value(raw) {
                 Some(parsed) => Ok(Some(parsed)),
                 None => Err(XarpError::Parse(format!(
-                    "invalid value '{raw}' for '{id}'"
+                    "invalid value '{raw}' for '{id}'{}",
+                    Self::TRY_HELP_HINT
                 ))),
             },
         }
@@ -236,6 +266,7 @@ impl ArgMatches {
     /// # Errors
     ///
     /// Returns [`XarpError::Parse`] if any supplied value cannot be parsed into `T`.
+    /// The message carries the same `--help` guidance as other parse errors.
     pub fn try_get_many<T: FromArgValue>(&self, id: &str) -> Result<Option<Vec<T>>, XarpError> {
         match self.values.get(id) {
             None => Ok(None),
@@ -246,7 +277,8 @@ impl ArgMatches {
                         Some(parsed) => out.push(parsed),
                         None => {
                             return Err(XarpError::Parse(format!(
-                                "invalid value '{raw}' for '{id}'"
+                                "invalid value '{raw}' for '{id}'{}",
+                                Self::TRY_HELP_HINT
                             )));
                         }
                     }
@@ -351,10 +383,15 @@ impl Xarp {
     }
 
     /// Parses arguments from `std::env::args()` or terminates the process on failure.
+    ///
+    /// This is a convenience wrapper for binaries: help prints to standard
+    /// output and exits with status `0`, version does the same, and parse
+    /// failures print to standard error and exit with status `2`. Library code
+    /// and tests should prefer [`Xarp::try_get_matches`], which returns the
+    /// [`XarpError`] instead of exiting.
     #[must_use]
     pub fn get_matches(self) -> ArgMatches {
-        let args: Vec<String> = env::args().collect();
-        match self.try_get_matches_from(&args) {
+        match self.try_get_matches() {
             Ok(matches) => matches,
             Err(XarpError::Help(msg)) => {
                 print!("{msg}");
@@ -371,6 +408,19 @@ impl Xarp {
         }
     }
 
+    /// Parses arguments from `std::env::args()` without exiting on error.
+    ///
+    /// Unlike [`Xarp::get_matches`], help, version, and parse failures are
+    /// returned as [`XarpError`] so callers decide how to report them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`XarpError`] if parsing fails or when `--help`/`--version` flags are passed.
+    pub fn try_get_matches(self) -> Result<ArgMatches, XarpError> {
+        let args: Vec<String> = env::args().collect();
+        self.try_get_matches_from(&args)
+    }
+
     /// Returns `true` for truthy flag values (`"1"` or case-insensitive `"true"`).
     fn is_truthy(val: &str) -> bool {
         val == "1" || val.eq_ignore_ascii_case("true")
@@ -378,9 +428,32 @@ impl Xarp {
 
     /// Validates argument definitions: duplicate ids, shorts, longs and
     /// duplicate subcommand names.
+    ///
+    /// Also rejects empty or ambiguous definitions (empty ids, reserved short
+    /// flags, malformed longs, unreachable subcommand names), unknown
+    /// [`Arg::conflicts_with`] targets, and optional positionals declared
+    /// before required ones.
     fn validate_definitions(&self) -> Result<(), XarpError> {
+        self.validate_names()?;
+        self.validate_flags()?;
+        self.validate_relations()?;
+        Ok(())
+    }
+
+    /// Rejects empty application/argument ids and unreachable subcommand names.
+    fn validate_names(&self) -> Result<(), XarpError> {
+        if self.name.is_empty() {
+            return Err(XarpError::Parse(
+                self.format_error("application name must not be empty"),
+            ));
+        }
         let mut ids = HashSet::new();
         for arg in &self.args {
+            if arg.id.is_empty() {
+                return Err(XarpError::Parse(
+                    self.format_error("argument id must not be empty"),
+                ));
+            }
             if !ids.insert(arg.id) {
                 return Err(XarpError::Parse(self.format_error(&format!(
                     "duplicate argument id '{}' found",
@@ -388,9 +461,35 @@ impl Xarp {
                 ))));
             }
         }
+        let mut sub_names = HashSet::new();
+        for sub in &self.subcommands {
+            if sub.name.is_empty() || sub.name.starts_with('-') {
+                return Err(XarpError::Parse(self.format_error(&format!(
+                    "invalid subcommand name '{}': must be non-empty and not start with '-'",
+                    sub.name
+                ))));
+            }
+            if !sub_names.insert(sub.name) {
+                return Err(XarpError::Parse(self.format_error(&format!(
+                    "duplicate subcommand '{0}' found",
+                    sub.name
+                ))));
+            }
+        }
+        Ok(())
+    }
+
+    /// Rejects duplicate or malformed short and long flags.
+    fn validate_flags(&self) -> Result<(), XarpError> {
         let mut shorts = HashSet::new();
         for arg in &self.args {
             if let Some(short) = arg.short {
+                if short == '-' || short == '=' || short.is_whitespace() || short.is_control() {
+                    return Err(XarpError::Parse(self.format_error(&format!(
+                        "invalid short flag '-{short}' for '{}': must not be '-', '=' or whitespace",
+                        arg.id
+                    ))));
+                }
                 if !shorts.insert(short) {
                     return Err(XarpError::Parse(
                         self.format_error(&format!("duplicate short flag '-{short}' found")),
@@ -401,6 +500,16 @@ impl Xarp {
         let mut longs = HashSet::new();
         for arg in &self.args {
             if let Some(long) = arg.long {
+                if long.is_empty()
+                    || long.starts_with('-')
+                    || long.contains('=')
+                    || long.chars().any(|c| c.is_whitespace() || c.is_control())
+                {
+                    return Err(XarpError::Parse(self.format_error(&format!(
+                        "invalid long flag '--{long}' for '{}'",
+                        arg.id
+                    ))));
+                }
                 if !longs.insert(long) {
                     return Err(XarpError::Parse(
                         self.format_error(&format!("duplicate long flag '--{long}' found")),
@@ -408,13 +517,51 @@ impl Xarp {
                 }
             }
         }
-        let mut sub_names = HashSet::new();
-        for sub in &self.subcommands {
-            if !sub_names.insert(sub.name) {
-                return Err(XarpError::Parse(self.format_error(&format!(
-                    "duplicate subcommand '{0}' found",
-                    sub.name
-                ))));
+        Ok(())
+    }
+
+    /// Validates relations between definitions: conflict targets must exist
+    /// and required positionals must precede optional ones.
+    fn validate_relations(&self) -> Result<(), XarpError> {
+        // Conflict targets must name a defined argument (or an auto-injected
+        // built-in) so typos cannot silently disable the check.
+        let ids: HashSet<&'static str> = self.args.iter().map(|a| a.id).collect();
+        let has_help_collision = self
+            .args
+            .iter()
+            .any(|a| a.id == "help" || a.short == Some('h') || a.long == Some("help"));
+        let has_version_collision = self
+            .args
+            .iter()
+            .any(|a| a.id == "version" || a.short == Some('V') || a.long == Some("version"));
+        for arg in &self.args {
+            for conflict_id in &arg.conflicts_with {
+                let known = ids.contains(conflict_id)
+                    || (!has_help_collision && *conflict_id == "help")
+                    || (self.version.is_some()
+                        && !has_version_collision
+                        && *conflict_id == "version");
+                if !known {
+                    return Err(XarpError::Parse(self.format_error(&format!(
+                        "the argument '{}' conflicts with unknown argument '{conflict_id}'",
+                        arg.id
+                    ))));
+                }
+            }
+        }
+        // A required positional after an optional one can never be reached by
+        // skipping the optional slot, so reject the definition.
+        let mut seen_optional_positional = false;
+        for arg in self.args.iter().filter(|a| a.is_positional()) {
+            if arg.required {
+                if seen_optional_positional {
+                    return Err(XarpError::Parse(self.format_error(&format!(
+                        "required positional '{}' must not follow an optional positional",
+                        arg.id
+                    ))));
+                }
+            } else {
+                seen_optional_positional = true;
             }
         }
         Ok(())
@@ -434,6 +581,7 @@ impl Xarp {
         effective_args: &[Arg],
         matches: &mut ArgMatches,
         explicit: &mut HashSet<String>,
+        env_lookup: &dyn Fn(&str) -> Option<String>,
         skip_required: bool,
     ) -> Result<(), XarpError> {
         for arg in effective_args {
@@ -441,7 +589,7 @@ impl Xarp {
                 continue;
             }
             if let Some(env_key) = arg.env {
-                if let Ok(env_val) = env::var(env_key) {
+                if let Some(env_val) = env_lookup(env_key) {
                     if arg.action == ArgAction::SetTrue {
                         if Self::is_truthy(&env_val) {
                             matches.flags.insert(arg.id.to_string());
@@ -521,11 +669,64 @@ impl Xarp {
 
     /// Attempts to parse arguments from a string slice without exiting on error.
     ///
+    /// Environment fallbacks are read from the real process environment. For
+    /// deterministic parsing in tests, use
+    /// [`Xarp::try_get_matches_with_env`] with an explicit map instead.
+    ///
+    /// The first element is treated as the program name and skipped. An option
+    /// that expects a value takes it from `--opt=value`, an attached short
+    /// value (`-p8080`), or the next token; a following `--` delimiter is
+    /// never consumed as a value and instead reports a missing value. Tokens
+    /// after a `--` delimiter are always positionals, which also lets callers
+    /// pass positional values equal to a subcommand name.
+    ///
     /// # Errors
     ///
     /// Returns [`XarpError`] if parsing fails or when `--help`/`--version` flags are passed.
     #[allow(clippy::too_many_lines)]
     pub fn try_get_matches_from(self, args: &[String]) -> Result<ArgMatches, XarpError> {
+        self.parse_impl(args, &|key| env::var(key).ok())
+    }
+
+    /// Attempts to parse arguments using an explicit environment map.
+    ///
+    /// Behaves exactly like [`Xarp::try_get_matches_from`], except `env`
+    /// fallbacks are looked up in `env_map` instead of the process
+    /// environment, making parsing fully deterministic under test.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`XarpError`] if parsing fails or when `--help`/`--version` flags are passed.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use std::collections::HashMap;
+    /// use xarp::{Arg, Xarp};
+    ///
+    /// let app = Xarp::new("demo").arg(Arg::new("out").long("out").env("OUT"));
+    /// let env_map = HashMap::from([("OUT".to_string(), "file.txt".to_string())]);
+    /// let matches = app
+    ///     .try_get_matches_with_env(&["demo".to_string()], &env_map)
+    ///     .unwrap();
+    /// let out: String = matches.get_one("out").unwrap();
+    /// assert_eq!(out, "file.txt");
+    /// ```
+    pub fn try_get_matches_with_env(
+        self,
+        args: &[String],
+        env_map: &HashMap<String, String>,
+    ) -> Result<ArgMatches, XarpError> {
+        self.parse_impl(args, &|key| env_map.get(key).cloned())
+    }
+
+    /// Shared parsing implementation parameterized over the environment source.
+    #[allow(clippy::too_many_lines)]
+    fn parse_impl(
+        self,
+        args: &[String],
+        env_lookup: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<ArgMatches, XarpError> {
         self.validate_definitions()?;
         let mut matches = ArgMatches::default();
         // Tracks arguments explicitly selected via CLI or environment.
@@ -608,7 +809,13 @@ impl Xarp {
                 // `get_one` defaults remain available in subcommand mode.
                 // Parent `required` args are skipped: the subcommand is an
                 // alternative command, not an extension of the parent.
-                self.apply_env_defaults(&effective_args, &mut matches, &mut explicit, true)?;
+                self.apply_env_defaults(
+                    &effective_args,
+                    &mut matches,
+                    &mut explicit,
+                    env_lookup,
+                    true,
+                )?;
                 self.validate_values(&effective_args, &matches, &explicit)?;
                 let sub_matches = sub.clone().try_get_matches_from(&tokens[i..])?;
                 matches.subcommand = Some((sub.name.to_string(), Box::new(sub_matches)));
@@ -655,7 +862,7 @@ impl Xarp {
                             val
                         } else {
                             i += 1;
-                            if i >= tokens.len() {
+                            if i >= tokens.len() || tokens[i] == "--" {
                                 return Err(XarpError::Parse(self.format_error(&format!(
                                     "argument '--{name}' requires a value"
                                 ))));
@@ -673,7 +880,7 @@ impl Xarp {
                             val
                         } else {
                             i += 1;
-                            if i >= tokens.len() {
+                            if i >= tokens.len() || tokens[i] == "--" {
                                 return Err(XarpError::Parse(self.format_error(&format!(
                                     "argument '--{name}' requires a value"
                                 ))));
@@ -724,7 +931,7 @@ impl Xarp {
                                 chars[c_idx + 1..].iter().collect::<String>()
                             } else {
                                 i += 1;
-                                if i >= tokens.len() {
+                                if i >= tokens.len() || tokens[i] == "--" {
                                     return Err(XarpError::Parse(self.format_error(&format!(
                                         "argument '-{short_char}' requires a value"
                                     ))));
@@ -798,7 +1005,13 @@ impl Xarp {
         // Apply environment variables, defaults, and required checks,
         // then validate possible values (all sources) and conflicts
         // (explicit selections only).
-        self.apply_env_defaults(&effective_args, &mut matches, &mut explicit, false)?;
+        self.apply_env_defaults(
+            &effective_args,
+            &mut matches,
+            &mut explicit,
+            env_lookup,
+            false,
+        )?;
         self.validate_values(&effective_args, &matches, &explicit)?;
 
         Ok(matches)
@@ -1126,5 +1339,330 @@ impl Xarp {
             msg,
             self.styles.literal.paint("--help")
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::Styles;
+
+    fn argv(args: &[&str]) -> Vec<String> {
+        args.iter().map(ToString::to_string).collect()
+    }
+
+    fn empty_env() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
+    #[test]
+    fn defaults_do_not_conflict_but_explicit_selections_do() {
+        let app = || {
+            Xarp::new("t")
+                .arg(
+                    Arg::new("a")
+                        .long("aaa")
+                        .default_value("x")
+                        .conflicts_with("b"),
+                )
+                .arg(Arg::new("b").long("bbb").default_value("y"))
+        };
+        assert!(app().try_get_matches_from(&argv(&["t"])).is_ok());
+        assert!(
+            app()
+                .try_get_matches_from(&argv(&["t", "--aaa", "1", "--bbb", "2"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn unknown_conflict_target_is_rejected() {
+        let result = Xarp::new("t")
+            .arg(Arg::new("a").long("aaa").conflicts_with("typo"))
+            .try_get_matches_from(&argv(&["t"]));
+        assert!(matches!(result, Err(XarpError::Parse(_))));
+    }
+
+    #[test]
+    fn illegal_definitions_are_rejected() {
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("").long("x"))
+                .try_get_matches_from(&argv(&["t"]))
+                .is_err()
+        );
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("a").short('-'))
+                .try_get_matches_from(&argv(&["t"]))
+                .is_err()
+        );
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("a").long("has space"))
+                .try_get_matches_from(&argv(&["t"]))
+                .is_err()
+        );
+        assert!(Xarp::new("").try_get_matches_from(&argv(&["t"])).is_err());
+        assert!(
+            Xarp::new("t")
+                .subcommand(Xarp::new("-bad"))
+                .try_get_matches_from(&argv(&["t"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn duplicate_definitions_are_rejected() {
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("a").short('x'))
+                .arg(Arg::new("b").short('x'))
+                .try_get_matches_from(&argv(&["t"]))
+                .is_err()
+        );
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("a").long("dup"))
+                .arg(Arg::new("b").long("dup"))
+                .try_get_matches_from(&argv(&["t"]))
+                .is_err()
+        );
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("same"))
+                .arg(Arg::new("same"))
+                .try_get_matches_from(&argv(&["t"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn required_positional_must_precede_optional_ones() {
+        assert!(
+            Xarp::new("t")
+                .arg(Arg::new("a"))
+                .arg(Arg::new("b").required(true))
+                .try_get_matches_from(&argv(&["t"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn single_value_options_keep_the_last_occurrence() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("opt"))
+            .try_get_matches_from(&argv(&["t", "--opt", "a", "--opt", "b"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some("b".to_string()));
+    }
+
+    #[test]
+    fn flag_defaults_and_env_precedence() {
+        let app = || {
+            Xarp::new("t").arg(
+                Arg::new("f")
+                    .long("flag")
+                    .action(ArgAction::SetTrue)
+                    .env("XARP_TEST_FLAG")
+                    .default_value("true"),
+            )
+        };
+        // Default applies when the environment is silent.
+        let matches = app()
+            .try_get_matches_with_env(&argv(&["t"]), &empty_env())
+            .unwrap();
+        assert!(matches.get_flag("f"));
+        // An explicitly falsy environment value overrides a truthy default.
+        let env_map = HashMap::from([("XARP_TEST_FLAG".to_string(), "0".to_string())]);
+        let matches = app()
+            .try_get_matches_with_env(&argv(&["t"]), &env_map)
+            .unwrap();
+        assert!(!matches.get_flag("f"));
+        // A required flag is not satisfied by a falsy environment value.
+        let result = Xarp::new("t")
+            .arg(
+                Arg::new("f")
+                    .long("flag")
+                    .action(ArgAction::SetTrue)
+                    .env("XARP_TEST_FLAG")
+                    .required(true),
+            )
+            .try_get_matches_with_env(&argv(&["t"]), &env_map);
+        assert!(matches!(result, Err(XarpError::Parse(_))));
+    }
+
+    #[test]
+    fn positional_actions_are_respected() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("p").action(ArgAction::SetTrue))
+            .try_get_matches_from(&argv(&["t", "hello"]))
+            .unwrap();
+        assert!(matches.get_flag("p"));
+
+        let matches = Xarp::new("t")
+            .arg(Arg::new("files").action(ArgAction::Append))
+            .try_get_matches_from(&argv(&["t", "a", "b", "c"]))
+            .unwrap();
+        assert_eq!(
+            matches.get_many::<String>("files"),
+            Some(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+        );
+    }
+
+    #[test]
+    fn subcommand_mode_keeps_parent_defaults() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("o").long("out").default_value("dflt"))
+            .subcommand(Xarp::new("sub"))
+            .try_get_matches_from(&argv(&["t", "sub"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some("dflt".to_string()));
+    }
+
+    #[test]
+    fn delimiter_forces_positional_over_subcommand() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("input").required(true))
+            .subcommand(Xarp::new("build"))
+            .try_get_matches_from(&argv(&["t", "--", "build"]))
+            .unwrap();
+        assert_eq!(
+            matches.get_one::<String>("input"),
+            Some("build".to_string())
+        );
+        assert!(matches.subcommand().is_none());
+    }
+
+    #[test]
+    fn delimiter_is_never_consumed_as_a_value() {
+        let result = Xarp::new("t")
+            .arg(Arg::new("o").long("opt"))
+            .try_get_matches_from(&argv(&["t", "--opt", "--"]));
+        assert!(matches!(result, Err(XarpError::Parse(_))));
+    }
+
+    #[test]
+    fn short_attached_equals_is_stripped() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("p").short('p'))
+            .try_get_matches_from(&argv(&["t", "-p=8080"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("p"), Some("8080".to_string()));
+    }
+
+    #[test]
+    fn flag_with_inline_value_is_rejected() {
+        let result = Xarp::new("t")
+            .arg(Arg::new("f").long("flag").action(ArgAction::SetTrue))
+            .try_get_matches_from(&argv(&["t", "--flag=false"]));
+        assert!(matches!(result, Err(XarpError::Parse(_))));
+    }
+
+    #[test]
+    fn bundled_help_and_version_flags_trigger() {
+        let result = Xarp::new("t")
+            .version("1.0")
+            .arg(Arg::new("v").short('v').action(ArgAction::SetTrue))
+            .try_get_matches_from(&argv(&["t", "-vh"]));
+        assert!(matches!(result, Err(XarpError::Help(_))));
+
+        let result = Xarp::new("t")
+            .version("1.0")
+            .arg(Arg::new("v").short('v').action(ArgAction::SetTrue))
+            .try_get_matches_from(&argv(&["t", "-vV"]));
+        assert!(matches!(result, Err(XarpError::Version(_))));
+    }
+
+    #[test]
+    fn version_flag_without_version_is_unexpected() {
+        assert!(
+            Xarp::new("t")
+                .try_get_matches_from(&argv(&["t", "--version"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn user_defined_help_short_is_not_hijacked() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("myh").short('h').action(ArgAction::SetTrue))
+            .try_get_matches_from(&argv(&["t", "-h"]))
+            .unwrap();
+        assert!(matches.get_flag("myh"));
+    }
+
+    #[test]
+    fn typed_getters_distinguish_missing_from_invalid() {
+        let matches = Xarp::new("t")
+            .arg(Arg::new("port").long("port"))
+            .try_get_matches_from(&argv(&["t", "--port", "abc"]))
+            .unwrap();
+        assert_eq!(matches.get_one::<u16>("port"), None);
+        let error = matches.try_get_one::<u16>("port").unwrap_err();
+        assert!(error.is_parse());
+        assert!(error.to_string().contains("--help"));
+
+        let missing = Xarp::new("t")
+            .arg(Arg::new("port").long("port"))
+            .try_get_matches_from(&argv(&["t"]))
+            .unwrap();
+        assert!(missing.try_get_one::<u16>("port").unwrap().is_none());
+        assert!(missing.try_get_many::<u16>("port").unwrap().is_none());
+    }
+
+    #[test]
+    fn error_kind_helpers_match_variants() {
+        assert!(XarpError::Help(String::new()).is_help());
+        assert!(XarpError::Version(String::new()).is_version());
+        assert!(XarpError::Parse(String::new()).is_parse());
+        assert!(!XarpError::Parse(String::new()).is_help());
+    }
+
+    #[test]
+    fn with_env_is_deterministic() {
+        let app = || Xarp::new("t").arg(Arg::new("o").long("out").env("OUT_ENV"));
+        let env_map = HashMap::from([("OUT_ENV".to_string(), "mapped".to_string())]);
+        let matches = app()
+            .try_get_matches_with_env(&argv(&["t"]), &env_map)
+            .unwrap();
+        assert_eq!(matches.get_one::<String>("o"), Some("mapped".to_string()));
+        assert!(
+            app()
+                .try_get_matches_with_env(&argv(&["t"]), &empty_env())
+                .unwrap()
+                .get_one::<String>("o")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn plain_theme_help_contains_no_escapes() {
+        let help = Xarp::new("t")
+            .about("x")
+            .styles(Styles::plain())
+            .render_help();
+        assert!(!help.contains('\x1b'));
+    }
+
+    #[test]
+    fn help_shows_metadata_and_unknown_fallback() {
+        let help = Xarp::new("t")
+            .arg(
+                Arg::new("o")
+                    .short('o')
+                    .long("out")
+                    .required(true)
+                    .value_name("F")
+                    .possible_values(["a", "b"])
+                    .env("MY_ENV")
+                    .default_value("a"),
+            )
+            .render_help();
+        for token in ["[required]", "possible values", "MY_ENV", "default"] {
+            assert!(help.contains(token), "help is missing {token}");
+        }
+        let no_version = Xarp::new("t").about("x").render_help();
+        assert!(no_version.contains("vunknown"));
     }
 }
