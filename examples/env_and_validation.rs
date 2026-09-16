@@ -24,7 +24,7 @@ use xarp::{Arg, ArgAction, Xarp};
 /// Builds the deploy-tool configuration shared by every run below.
 fn build_app() -> Xarp {
     Xarp::new("deployer")
-        .version("0.1.2-dev")
+        .version("0.1.2-alpha.1")
         .about("Reads deployment settings from flags, environment, and defaults")
         .arg(
             Arg::new("region")

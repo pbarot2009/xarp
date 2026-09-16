@@ -10,7 +10,7 @@
 //! use xarp::{Arg, ArgAction, Xarp};
 //!
 //! let matches = Xarp::new("demo")
-//!     .version("0.1.2-dev")
+//!     .version("0.1.2-alpha.1")
 //!     .about("A simple CLI built with xarp")
 //!     .arg(
 //!         Arg::new("verbose")

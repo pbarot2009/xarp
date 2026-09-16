@@ -19,7 +19,7 @@ use xarp::{Arg, ArgAction, Xarp};
 /// Builds the demo CLI definition shared by every parse below.
 fn build_app() -> Xarp {
     Xarp::new("deploy")
-        .version("0.1.2-dev")
+        .version("0.1.2-alpha.1")
         .about("Fake deployment tool used to demonstrate error handling")
         .arg(
             Arg::new("port")

@@ -57,7 +57,7 @@ fn build_app() -> Xarp {
         .subcommand(remote_remove);
 
     Xarp::new("vcs")
-        .version("0.1.2-dev")
+        .version("0.1.2-alpha.1")
         .about("A tiny version-control CLI built with xarp")
         .arg(
             Arg::new("verbose")
